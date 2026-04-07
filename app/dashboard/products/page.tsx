@@ -10,18 +10,18 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/utils';
 import type { Product } from '@/types/database';
-import { Search, RefreshCw, Upload, Pencil, Check, X } from 'lucide-react';
+import { Search, Upload, Pencil, Check, X, Plus, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 
 export default function ProductsPage() {
   const { toast } = useToast();
+  const [userId, setUserId] = useState<string | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [filtered, setFiltered] = useState<Product[]>([]);
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [loading, setLoading] = useState(true);
-  const [scraping, setScraping] = useState(false);
 
   // Edit state
   const [editProduct, setEditProduct] = useState<Product | null>(null);
@@ -29,16 +29,34 @@ export default function ProductsPage() {
   const [editVP, setEditVP] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const fetchProducts = async () => {
+  // Add product state
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState('');
+  const [addPrice, setAddPrice] = useState('');
+  const [addVP, setAddVP] = useState('');
+  const [addCategory, setAddCategory] = useState('');
+  const [addImageUrl, setAddImageUrl] = useState('');
+  const [adding, setAdding] = useState(false);
+
+  const fetchProducts = async (uid: string) => {
     setLoading(true);
     const supabase = createClient();
-    const { data } = await supabase.from('products').select('*').order('name');
+    const { data } = await supabase.from('products').select('*').eq('user_id', uid).order('name');
     setProducts(data ?? []);
     setLoading(false);
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        setUserId(data.user.id);
+        fetchProducts(data.user.id);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     let result = products;
@@ -57,7 +75,7 @@ export default function ProductsPage() {
   };
 
   const handleSaveEdit = async () => {
-    if (!editProduct) return;
+    if (!editProduct || !userId) return;
     setSaving(true);
     const supabase = createClient();
     const { error } = await supabase
@@ -67,33 +85,62 @@ export default function ProductsPage() {
         volume_points: parseFloat(editVP) || 0,
         category: editCategory || null,
       })
-      .eq('id', editProduct.id);
+      .eq('id', editProduct.id)
+      .eq('user_id', userId);
     setSaving(false);
     if (error) {
       toast({ title: 'Update failed', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Product updated' });
       setEditProduct(null);
-      fetchProducts();
+      fetchProducts(userId);
     }
   };
 
-  const handleScrape = async () => {
-    setScraping(true);
-    try {
-      const res = await fetch('/api/scrape-products', { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'Scrape failed');
-      toast({ title: 'Products updated', description: `${json.count} products scraped.` });
-      fetchProducts();
-    } catch (err: unknown) {
-      toast({ title: 'Scrape failed', description: err instanceof Error ? err.message : 'Unknown error', variant: 'destructive' });
-    } finally {
-      setScraping(false);
+  const handleDelete = async () => {
+    if (!editProduct || !userId) return;
+    setDeleting(true);
+    const supabase = createClient();
+    const { error } = await supabase.from('products').delete().eq('id', editProduct.id).eq('user_id', userId);
+    setDeleting(false);
+    if (error) {
+      toast({ title: 'Delete failed', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Product removed' });
+      setEditProduct(null);
+      fetchProducts(userId);
+    }
+  };
+
+  const handleAddProduct = async () => {
+    if (!addName.trim()) {
+      toast({ title: 'Name required', description: 'Please enter a product name.', variant: 'destructive' });
+      return;
+    }
+    if (!userId) return;
+    setAdding(true);
+    const supabase = createClient();
+    const { error } = await supabase.from('products').insert({
+      user_id: userId,
+      name: addName.trim(),
+      retail_price: parseFloat(addPrice) || 0,
+      volume_points: parseFloat(addVP) || 0,
+      category: addCategory.trim() || null,
+      image_url: addImageUrl.trim() || null,
+    });
+    setAdding(false);
+    if (error) {
+      toast({ title: 'Add failed', description: error.message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Product added' });
+      setAddOpen(false);
+      setAddName(''); setAddPrice(''); setAddVP(''); setAddCategory(''); setAddImageUrl('');
+      fetchProducts(userId);
     }
   };
 
   const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!userId) return;
     const file = e.target.files?.[0];
     if (!file) return;
     const text = await file.text();
@@ -105,9 +152,10 @@ export default function ProductsPage() {
     });
     const supabase = createClient();
     const prods = rows.map((r) => ({
+      user_id: userId,
       name: r.name,
       category: r.category || null,
-      retail_price: parseFloat(r.retail_price) || 0,
+      retail_price: parseFloat(r.my_price) || 0,
       image_url: r.image_url || null,
       volume_points: parseFloat(r.volume_points) || 0,
     }));
@@ -116,7 +164,7 @@ export default function ProductsPage() {
       toast({ title: 'Upload failed', description: error.message, variant: 'destructive' });
     } else {
       toast({ title: 'Products imported', description: `${prods.length} products uploaded.` });
-      fetchProducts();
+      fetchProducts(userId);
     }
     e.target.value = '';
   };
@@ -129,9 +177,9 @@ export default function ProductsPage() {
           <p className="text-muted-foreground text-sm">Herbalife product catalog</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <Button variant="outline" onClick={handleScrape} disabled={scraping} className="gap-2">
-            <RefreshCw className={`h-4 w-4 ${scraping ? 'animate-spin' : ''}`} />
-            {scraping ? 'Scraping...' : 'Scrape Products'}
+          <Button onClick={() => setAddOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            Add Product
           </Button>
           <label className="cursor-pointer">
             <Button variant="outline" className="gap-2" asChild>
@@ -172,12 +220,18 @@ export default function ProductsPage() {
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-16">
-          <p className="text-muted-foreground">
-            {products.length === 0
-              ? 'No products yet. Use "Import CSV" to add products.'
-              : 'No products match your search.'}
-          </p>
+        <div className="text-center py-16 space-y-3">
+          {products.length === 0 ? (
+            <>
+              <p className="text-muted-foreground">No products yet. Use &quot;Add Product&quot; or &quot;Import CSV&quot; to get started.</p>
+              <div className="inline-block text-left bg-muted rounded-md px-4 py-3">
+                <p className="text-xs text-muted-foreground mb-1 font-medium">CSV format:</p>
+                <code className="text-xs text-foreground">name, category, my_price, image_url, volume_points</code>
+              </div>
+            </>
+          ) : (
+            <p className="text-muted-foreground">No products match your search.</p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -191,7 +245,6 @@ export default function ProductsPage() {
                     <Image src="/herbalife-logo.png" alt="Herbalife" width={64} height={64} className="object-contain opacity-40" />
                   </div>
                 )}
-                {/* Edit button on hover */}
                 <button
                   onClick={() => openEdit(product)}
                   className="absolute top-2 right-2 bg-white rounded-full p-1.5 shadow opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50"
@@ -206,7 +259,7 @@ export default function ProductsPage() {
                   <Badge variant="secondary" className="mb-2 text-xs">{product.category}</Badge>
                 )}
                 <div className="flex items-center justify-between mt-2">
-                  <span className="font-bold text-primary">{formatCurrency(product.retail_price)}</span>
+                  <span className="font-bold text-primary" title="My Price">{formatCurrency(product.retail_price)}</span>
                   {product.volume_points > 0 && (
                     <span className="text-xs text-muted-foreground">{product.volume_points} VP</span>
                   )}
@@ -221,6 +274,75 @@ export default function ProductsPage() {
         {filtered.length} of {products.length} products
       </p>
 
+      {/* Add Product Dialog */}
+      <Dialog open={addOpen} onOpenChange={(v) => { if (!v) setAddOpen(false); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Add Product</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Product Name <span className="text-destructive">*</span></Label>
+              <Input
+                value={addName}
+                onChange={(e) => setAddName(e.target.value)}
+                placeholder="e.g. Formula 1 Shake"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>My Price (₹)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={addPrice}
+                onChange={(e) => setAddPrice(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Volume Points</Label>
+              <Input
+                type="number"
+                step="0.01"
+                value={addVP}
+                onChange={(e) => setAddVP(e.target.value)}
+                placeholder="0"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Input
+                value={addCategory}
+                onChange={(e) => setAddCategory(e.target.value)}
+                placeholder="e.g. Meal Replacement"
+                list="add-cat-suggestions"
+              />
+              <datalist id="add-cat-suggestions">
+                {categories.map((c) => <option key={c} value={c} />)}
+              </datalist>
+            </div>
+            <div className="space-y-2">
+              <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input
+                value={addImageUrl}
+                onChange={(e) => setAddImageUrl(e.target.value)}
+                placeholder="https://..."
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setAddOpen(false)}>
+                Cancel
+              </Button>
+              <Button className="gap-2" onClick={handleAddProduct} disabled={adding}>
+                <Plus className="h-4 w-4" />
+                {adding ? 'Adding...' : 'Add Product'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Product Dialog */}
       <Dialog open={!!editProduct} onOpenChange={(v) => { if (!v) setEditProduct(null); }}>
         <DialogContent className="max-w-sm">
@@ -232,7 +354,7 @@ export default function ProductsPage() {
               <p className="text-sm font-medium text-muted-foreground line-clamp-2">{editProduct.name}</p>
 
               <div className="space-y-2">
-                <Label>Retail Price (₹)</Label>
+                <Label>My Price (₹)</Label>
                 <Input
                   type="number"
                   step="0.01"
@@ -265,14 +387,25 @@ export default function ProductsPage() {
                 </datalist>
               </div>
 
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" className="gap-2" onClick={() => setEditProduct(null)}>
-                  <X className="h-4 w-4" />Cancel
+              <div className="flex gap-2 justify-between">
+                <Button
+                  variant="destructive"
+                  className="gap-2"
+                  onClick={handleDelete}
+                  disabled={deleting || saving}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  {deleting ? 'Removing...' : 'Remove'}
                 </Button>
-                <Button className="gap-2" onClick={handleSaveEdit} disabled={saving}>
-                  <Check className="h-4 w-4" />
-                  {saving ? 'Saving...' : 'Save'}
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="gap-2" onClick={() => setEditProduct(null)}>
+                    <X className="h-4 w-4" />Cancel
+                  </Button>
+                  <Button className="gap-2" onClick={handleSaveEdit} disabled={saving || deleting}>
+                    <Check className="h-4 w-4" />
+                    {saving ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
               </div>
             </div>
           )}

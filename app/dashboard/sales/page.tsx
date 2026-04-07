@@ -312,7 +312,7 @@ export default function SalesPage() {
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader><DialogTitle>Add Sale</DialogTitle></DialogHeader>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Date</Label>
                     <Input type="date" {...register('date')} />
@@ -471,7 +471,7 @@ export default function SalesPage() {
       </Card>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-600">{formatCurrency(totalProfit)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
@@ -494,15 +494,15 @@ export default function SalesPage() {
                     <TableHead>Customer</TableHead>
                     <TableHead>Product</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
-                    <TableHead className="text-right">My Price</TableHead>
-                    <TableHead className="text-right">My Total</TableHead>
-                    <TableHead className="text-right">Selling Price</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">My Total</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Selling Price</TableHead>
                     <TableHead className="text-right">Selling Total</TableHead>
                     <TableHead className="text-right">Profit</TableHead>
-                    <TableHead className="text-right">VP</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">VP</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Method</TableHead>
-                    <TableHead>Comments</TableHead>
+                    <TableHead className="hidden lg:table-cell">Method</TableHead>
+                    <TableHead className="hidden lg:table-cell">Comments</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -511,19 +511,19 @@ export default function SalesPage() {
                     <TableRow key={sale.id}>
                       <TableCell className="text-sm">{formatDate(sale.date)}</TableCell>
                       <TableCell className="text-sm font-medium">{sale.customer_name}</TableCell>
-                      <TableCell className="text-sm max-w-[130px] truncate">{sale.product_name}</TableCell>
+                      <TableCell className="text-sm max-w-[100px] truncate">{sale.product_name}</TableCell>
                       <TableCell className="text-right text-sm">{sale.quantity}</TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground">{formatCurrency(sale.my_price)}</TableCell>
-                      <TableCell className="text-right text-sm font-medium">{formatCurrency(sale.my_price * sale.quantity)}</TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground">{formatCurrency(sale.retail_price)}</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground hidden md:table-cell">{formatCurrency(sale.my_price)}</TableCell>
+                      <TableCell className="text-right text-sm font-medium hidden md:table-cell">{formatCurrency(sale.my_price * sale.quantity)}</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground hidden lg:table-cell">{formatCurrency(sale.retail_price)}</TableCell>
                       <TableCell className="text-right text-sm font-medium">{formatCurrency(sale.retail_price * sale.quantity)}</TableCell>
                       <TableCell className="text-right text-sm text-green-600 font-medium">{formatCurrency(sale.profit * sale.quantity)}</TableCell>
-                      <TableCell className="text-right text-sm text-purple-600">{((sale.volume_points ?? 0) * sale.quantity).toFixed(2)}</TableCell>
+                      <TableCell className="text-right text-sm text-purple-600 hidden lg:table-cell">{((sale.volume_points ?? 0) * sale.quantity).toFixed(2)}</TableCell>
                       <TableCell>
                         <Badge variant={sale.payment_status === 'done' ? 'success' : 'warning'}>{sale.payment_status}</Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground capitalize">{sale.payment_method ?? '-'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate" title={sale.comments ?? ''}>{sale.comments ?? '-'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground capitalize hidden lg:table-cell">{sale.payment_method ?? '-'}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate hidden lg:table-cell" title={sale.comments ?? ''}>{sale.comments ?? '-'}</TableCell>
                       <TableCell>
                         <div className="flex gap-1 justify-end">
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(sale)}>
@@ -548,7 +548,7 @@ export default function SalesPage() {
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Edit Sale</DialogTitle></DialogHeader>
           <form onSubmit={handleEditSubmit(onEditSubmit)} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Date</Label>
                 <Input type="date" {...regEdit('date')} />
@@ -569,7 +569,7 @@ export default function SalesPage() {
               <Input {...regEdit('product_name')} list="edit-prod" />
               <datalist id="edit-prod">{products.map((p) => <option key={p.id} value={p.name} />)}</datalist>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Quantity</Label>
                 <Input type="number" min={1} {...regEdit('quantity')} />
@@ -579,7 +579,7 @@ export default function SalesPage() {
                 <Input type="number" step="0.01" {...regEdit('volume_points')} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>My Price (₹) per unit</Label>
                 <Input type="number" step="0.01" {...regEdit('my_price')} />

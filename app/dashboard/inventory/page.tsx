@@ -164,7 +164,7 @@ export default function InventoryPage() {
               <DialogTitle>{editItem ? 'Edit Item' : 'Add Inventory Item'}</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Date</Label>
                   <Input type="date" {...register('date')} />
@@ -203,7 +203,7 @@ export default function InventoryPage() {
                 {errors.product_name && <p className="text-xs text-destructive">{errors.product_name.message}</p>}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>My Price (₹) <span className="text-xs text-muted-foreground font-normal"></span></Label>
                   <Input type="number" step="0.01" {...register('my_price')} />
@@ -295,11 +295,11 @@ export default function InventoryPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Product</TableHead>
                       <TableHead className="text-right">Qty</TableHead>
-                      <TableHead className="text-right">My Price</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
                       <TableHead className="text-right">Total Cost</TableHead>
-                      <TableHead className="text-right">VP/unit</TableHead>
-                      <TableHead className="text-right">Total VP</TableHead>
-                      <TableHead>Comments</TableHead>
+                      <TableHead className="text-right hidden lg:table-cell">VP/unit</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Total VP</TableHead>
+                      <TableHead className="hidden lg:table-cell">Comments</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -307,13 +307,13 @@ export default function InventoryPage() {
                     {filteredItems.map((item) => (
                       <TableRow key={item.id}>
                         <TableCell className="text-sm">{formatDate(item.date)}</TableCell>
-                        <TableCell className="text-sm font-medium max-w-[160px] truncate">{item.product_name}</TableCell>
+                        <TableCell className="text-sm font-medium max-w-[120px] truncate">{item.product_name}</TableCell>
                         <TableCell className="text-right text-sm">{item.quantity}</TableCell>
-                        <TableCell className="text-right text-sm">{formatCurrency(item.my_price)}</TableCell>
+                        <TableCell className="text-right text-sm hidden md:table-cell">{formatCurrency(item.my_price)}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{formatCurrency(item.my_price * item.quantity)}</TableCell>
-                        <TableCell className="text-right text-sm text-muted-foreground">{item.volume_points ?? 0}</TableCell>
-                        <TableCell className="text-right text-sm text-purple-600 font-medium">{((item.volume_points ?? 0) * item.quantity).toFixed(2)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate">{item.comments ?? '-'}</TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground hidden lg:table-cell">{item.volume_points ?? 0}</TableCell>
+                        <TableCell className="text-right text-sm text-purple-600 font-medium hidden md:table-cell">{((item.volume_points ?? 0) * item.quantity).toFixed(2)}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate hidden lg:table-cell">{item.comments ?? '-'}</TableCell>
                         <TableCell>
                           <div className="flex gap-1 justify-end">
                             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(item)}>
@@ -331,11 +331,11 @@ export default function InventoryPage() {
                     <TableRow>
                       <TableCell colSpan={2} className="font-bold">Total</TableCell>
                       <TableCell className="text-right font-bold">{totalQty}</TableCell>
-                      <TableCell />
+                      <TableCell className="hidden md:table-cell" />
                       <TableCell className="text-right font-bold">{formatCurrency(totalCost)}</TableCell>
-                      <TableCell />
-                      <TableCell className="text-right font-bold text-purple-600">{totalVP.toFixed(2)}</TableCell>
-                      <TableCell colSpan={2} />
+                      <TableCell className="hidden lg:table-cell" />
+                      <TableCell className="text-right font-bold text-purple-600 hidden md:table-cell">{totalVP.toFixed(2)}</TableCell>
+                      <TableCell className="hidden lg:table-cell" colSpan={2} />
                     </TableRow>
                   </TableFooter>
                 </Table>

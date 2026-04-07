@@ -241,7 +241,7 @@ export default function CenterPage() {
                 <DialogTitle>{editSale ? 'Edit Sale' : 'Add Center Sale'}</DialogTitle>
               </DialogHeader>
               <form onSubmit={saleForm.handleSubmit(onSaleSubmit)} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Date</Label>
                     <Input type="date" {...saleForm.register('date')} />
@@ -274,7 +274,7 @@ export default function CenterPage() {
                   <Input placeholder="Or type product name" {...saleForm.register('product_name')} />
                   {saleForm.formState.errors.product_name && <p className="text-xs text-destructive">{saleForm.formState.errors.product_name.message}</p>}
                 </div>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label>Quantity</Label>
                     <Input type="number" min={1} {...saleForm.register('quantity')} />
@@ -304,7 +304,7 @@ export default function CenterPage() {
       </div>
 
       {/* Revenue summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader>
           <CardContent><p className="text-xl font-bold">{formatCurrency(todayRevenue)}</p><p className="text-xs text-muted-foreground">{todaySales.reduce((a, s) => a + s.quantity, 0)} items · {todaySales.length} entries</p></CardContent>
@@ -358,10 +358,10 @@ export default function CenterPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Customer</TableHead>
                       <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Qty</TableHead>
-                      <TableHead className="text-right">Price</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Qty</TableHead>
+                      <TableHead className="text-right hidden md:table-cell">Price</TableHead>
                       <TableHead className="text-right">Total</TableHead>
-                      <TableHead>Comments</TableHead>
+                      <TableHead className="hidden lg:table-cell">Comments</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -370,11 +370,11 @@ export default function CenterPage() {
                       <TableRow key={sale.id}>
                         <TableCell className="text-sm">{formatDate(sale.date)}</TableCell>
                         <TableCell className="text-sm font-medium">{sale.customer_name}</TableCell>
-                        <TableCell className="text-sm">{sale.product_name}</TableCell>
-                        <TableCell className="text-right text-sm">{sale.quantity}</TableCell>
-                        <TableCell className="text-right text-sm">{formatCurrency(sale.fixed_price)}</TableCell>
+                        <TableCell className="text-sm max-w-[100px] truncate">{sale.product_name}</TableCell>
+                        <TableCell className="text-right text-sm hidden md:table-cell">{sale.quantity}</TableCell>
+                        <TableCell className="text-right text-sm hidden md:table-cell">{formatCurrency(sale.fixed_price)}</TableCell>
                         <TableCell className="text-right text-sm font-medium">{formatCurrency(sale.fixed_price * sale.quantity)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate">{sale.comments ?? '-'}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate hidden lg:table-cell">{sale.comments ?? '-'}</TableCell>
                         <TableCell>
                           <div className="flex gap-1 justify-end">
                             <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEditSale(sale)}>
