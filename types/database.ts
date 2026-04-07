@@ -32,6 +32,7 @@ export interface Database {
       products: {
         Row: {
           id: number;
+          user_id: string;
           name: string;
           category: string | null;
           retail_price: number;
@@ -42,6 +43,7 @@ export interface Database {
         };
         Insert: {
           id?: number;
+          user_id: string;
           name: string;
           category?: string | null;
           retail_price: number;
@@ -52,6 +54,7 @@ export interface Database {
         };
         Update: {
           id?: number;
+          user_id?: string;
           name?: string;
           category?: string | null;
           retail_price?: number;
