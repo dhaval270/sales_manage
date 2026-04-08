@@ -14,9 +14,117 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Inventory, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Search } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, FileText, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
+
+function printInventoryPeriodReport(
+  periodItems: Inventory[],
+  from: string,
+  to: string,
+  managerName: string,
+) {
+  const totalQty = periodItems.reduce((a, i) => a + i.quantity, 0);
+  const totalCost = periodItems.reduce((a, i) => a + i.my_price * i.quantity, 0);
+  const totalVP = periodItems.reduce((a, i) => a + (i.volume_points ?? 0) * i.quantity, 0);
+
+  const byProduct = new Map<string, { qty: number; cost: number; vp: number }>();
+  for (const i of periodItems) {
+    if (!byProduct.has(i.product_name)) byProduct.set(i.product_name, { qty: 0, cost: 0, vp: 0 });
+    const p = byProduct.get(i.product_name)!;
+    p.qty += i.quantity;
+    p.cost += i.my_price * i.quantity;
+    p.vp += (i.volume_points ?? 0) * i.quantity;
+  }
+
+  const productRows = Array.from(byProduct.entries())
+    .sort((a, b) => b[1].cost - a[1].cost)
+    .map(([name, d]) => `
+      <tr>
+        <td>${name}</td>
+        <td class="num">${d.qty}</td>
+        <td class="num">₹${(d.cost / d.qty).toFixed(2)}</td>
+        <td class="num">₹${d.cost.toFixed(2)}</td>
+        <td class="num" style="color:#7c3aed">${d.vp.toFixed(2)}</td>
+      </tr>`)
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Inventory Report ${from} to ${to}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    h2 { font-size: 15px; margin: 24px 0 10px; color: #333; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 28px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
+    .card .label { font-size: 11px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 20px; font-weight: 700; }
+    .card.qty .value { color: #1d4ed8; }
+    .card.cost .value { color: #be123c; }
+    .card.vp .value { color: #7c3aed; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 12px; border-bottom: 2px solid #ddd; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; }
+    tfoot tr { font-weight: bold; background: #f9fafb; }
+    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Inventory Period Report</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>Period:</strong> ${from} to ${to}<br/>
+      <strong>Total Entries:</strong> ${periodItems.length} purchase records
+    </div>
+    <div style="text-align:right">
+      <strong>Manager:</strong> ${managerName}<br/>
+      <strong>Generated:</strong> ${new Date().toLocaleString()}
+    </div>
+  </div>
+  <div class="summary-grid">
+    <div class="card qty"><div class="label">Total Units Purchased</div><div class="value">${totalQty}</div></div>
+    <div class="card cost"><div class="label">Total Cost Spent</div><div class="value">₹${totalCost.toFixed(2)}</div></div>
+    <div class="card vp"><div class="label">Total Volume Points</div><div class="value">${totalVP.toFixed(2)}</div></div>
+  </div>
+  <h2>Product Breakdown</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th class="num">Units</th>
+        <th class="num">Avg. Price</th>
+        <th class="num">Total Cost</th>
+        <th class="num">Volume Points</th>
+      </tr>
+    </thead>
+    <tbody>${productRows}</tbody>
+    <tfoot>
+      <tr>
+        <td>TOTAL</td>
+        <td class="num">${totalQty}</td>
+        <td class="num">—</td>
+        <td class="num">₹${totalCost.toFixed(2)}</td>
+        <td class="num" style="color:#7c3aed">${totalVP.toFixed(2)}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <div class="footer">Herbalife Sales Manager · Inventory Report · ${from} to ${to}</div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+}
 
 const inventorySchema = z.object({
   date: z.string().min(1, 'Date is required'),
@@ -38,6 +146,10 @@ export default function InventoryPage() {
   const [editItem, setEditItem] = useState<Inventory | null>(null);
   const [productSearch, setProductSearch] = useState('');
   const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const [managerName, setManagerName] = useState('Manager');
+  const [periodReportOpen, setPeriodReportOpen] = useState(false);
+  const [periodFrom, setPeriodFrom] = useState('');
+  const [periodTo, setPeriodTo] = useState('');
 
   // Filters
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -55,12 +167,17 @@ export default function InventoryPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const [{ data: invData }, { data: prodData }] = await Promise.all([
+    const [{ data: invData }, { data: prodData }, { data: { user } }] = await Promise.all([
       supabase.from('inventory').select('*').order('date', { ascending: false }),
       supabase.from('products').select('*').order('name'),
+      supabase.auth.getUser(),
     ]);
     setItems(invData ?? []);
     setProducts(prodData ?? []);
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
+      if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
+    }
     setLoading(false);
   }, []);
 
@@ -148,6 +265,16 @@ export default function InventoryPage() {
   const totalCost = filteredItems.reduce((a, i) => a + i.my_price * i.quantity, 0);
   const totalVP = filteredItems.reduce((a, i) => a + (i.volume_points ?? 0) * i.quantity, 0);
 
+  // Period report
+  const periodItems = items.filter((i) => {
+    if (periodFrom && i.date < periodFrom) return false;
+    if (periodTo && i.date > periodTo) return false;
+    return true;
+  });
+  const periodQty = periodItems.reduce((a, i) => a + i.quantity, 0);
+  const periodCost = periodItems.reduce((a, i) => a + i.my_price * i.quantity, 0);
+  const periodVP = periodItems.reduce((a, i) => a + (i.volume_points ?? 0) * i.quantity, 0);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -155,11 +282,65 @@ export default function InventoryPage() {
           <h1 className="text-2xl font-bold">Inventory</h1>
           <p className="text-muted-foreground text-sm">Stock management</p>
         </div>
-        <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) { setEditItem(null); resetForm(); } }}>
-          <DialogTrigger asChild>
-            <Button className="gap-2"><Plus className="h-4 w-4" />Add Item</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex gap-2">
+          {/* Period Report */}
+          <Dialog open={periodReportOpen} onOpenChange={(v) => { setPeriodReportOpen(v); if (!v) { setPeriodFrom(''); setPeriodTo(''); } }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2"><FileText className="h-4 w-4" />Period Report</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Inventory Period Report</DialogTitle></DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">Select a date range to generate a summary of inventory purchases.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>From Date</Label>
+                    <Input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>To Date</Label>
+                    <Input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} />
+                  </div>
+                </div>
+                {(periodFrom || periodTo) && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Total Units</p>
+                        <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{periodQty}</p>
+                      </div>
+                      <div className="bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Total Cost</p>
+                        <p className="text-lg font-bold text-rose-700 dark:text-rose-400">{formatCurrency(periodCost)}</p>
+                      </div>
+                      <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Volume Points</p>
+                        <p className="text-lg font-bold text-purple-700 dark:text-purple-400">{periodVP.toFixed(2)}</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground text-center">{periodItems.length} purchase records</p>
+                    {periodItems.length > 0 ? (
+                      <Button className="w-full gap-2" onClick={() => printInventoryPeriodReport(periodItems, periodFrom || 'all', periodTo || 'all', managerName)}>
+                        <Download className="h-4 w-4" />Download Report
+                      </Button>
+                    ) : (
+                      <p className="text-center text-sm text-muted-foreground py-2">No records found in this period.</p>
+                    )}
+                  </div>
+                )}
+                {!periodFrom && !periodTo && (
+                  <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Add Item */}
+          <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) { setEditItem(null); resetForm(); } }}>
+            <DialogTrigger asChild>
+              <Button className="gap-2"><Plus className="h-4 w-4" />Add Item</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editItem ? 'Edit Item' : 'Add Inventory Item'}</DialogTitle>
             </DialogHeader>
@@ -237,7 +418,8 @@ export default function InventoryPage() {
               </div>
             </form>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
 
       {/* Date filters */}
