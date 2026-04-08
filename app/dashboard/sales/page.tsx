@@ -107,11 +107,11 @@ function groupSales(sales: Sale[]): SaleGroup[] {
     }
   }
 
-  for (const g of map.values()) {
-    const hasDone = g.items.some((s) => s.payment_status === 'done');
-    const hasPending = g.items.some((s) => s.payment_status === 'pending');
+  Array.from(map.values()).forEach((g) => {
+    const hasDone = g.items.some((s: Sale) => s.payment_status === 'done');
+    const hasPending = g.items.some((s: Sale) => s.payment_status === 'pending');
     g.status = hasDone && hasPending ? 'mixed' : hasPending ? 'pending' : 'done';
-  }
+  });
 
   return Array.from(map.values());
 }
