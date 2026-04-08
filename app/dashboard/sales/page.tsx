@@ -15,11 +15,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Sale, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Receipt, Search, X } from 'lucide-react';
+import { Plus, Pencil, Trash2, Receipt, Search, X, Eye, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
-// Multi-product add schema
+// ─── Schemas ────────────────────────────────────────────────────────────────
+
 const lineItemSchema = z.object({
   product_name: z.string().min(1, 'Product required'),
   quantity: z.coerce.number().min(1, 'Min 1'),
@@ -38,7 +39,6 @@ const saleSchema = z.object({
 
 type SaleForm = z.infer<typeof saleSchema>;
 
-// Single-row edit schema
 const editSchema = z.object({
   date: z.string().min(1),
   customer_name: z.string().min(1),
@@ -54,6 +54,159 @@ type EditForm = z.infer<typeof editSchema>;
 
 const emptyItem = { product_name: '', quantity: 1, my_price: 0, retail_price: 0, volume_points: 0, comments: '' };
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type SaleGroup = {
+  key: string;
+  date: string;
+  customer_name: string;
+  reference: string | null;
+  items: Sale[];
+  totalQty: number;
+  totalSellingAmount: number;
+  totalMyAmount: number;
+  totalProfit: number;        // only from 'done' items
+  pendingAmount: number;      // selling total of 'pending' items
+  totalVP: number;
+  status: 'done' | 'pending' | 'mixed';
+  allIds: number[];
+};
+
+function groupSales(sales: Sale[]): SaleGroup[] {
+  const map = new Map<string, SaleGroup>();
+  for (const s of sales) {
+    const key = `${s.date}|${s.customer_name}|${s.reference ?? ''}`;
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        date: s.date,
+        customer_name: s.customer_name,
+        reference: s.reference,
+        items: [],
+        totalQty: 0,
+        totalSellingAmount: 0,
+        totalMyAmount: 0,
+        totalProfit: 0,
+        pendingAmount: 0,
+        totalVP: 0,
+        status: 'done',
+        allIds: [],
+      });
+    }
+    const g = map.get(key)!;
+    g.items.push(s);
+    g.allIds.push(s.id);
+    g.totalQty += s.quantity;
+    g.totalSellingAmount += s.retail_price * s.quantity;
+    g.totalMyAmount += s.my_price * s.quantity;
+    g.totalVP += (s.volume_points ?? 0) * s.quantity;
+    if (s.payment_status === 'done') {
+      g.totalProfit += s.profit * s.quantity;
+    } else {
+      g.pendingAmount += s.retail_price * s.quantity;
+    }
+  }
+
+  for (const g of map.values()) {
+    const hasDone = g.items.some((s) => s.payment_status === 'done');
+    const hasPending = g.items.some((s) => s.payment_status === 'pending');
+    g.status = hasDone && hasPending ? 'mixed' : hasPending ? 'pending' : 'done';
+  }
+
+  return Array.from(map.values());
+}
+
+// ─── Invoice print ───────────────────────────────────────────────────────────
+
+function printInvoice(group: SaleGroup, managerName: string) {
+  const rows = group.items
+    .map(
+      (s) => `
+      <tr>
+        <td>${s.product_name}</td>
+        <td class="num">${s.quantity}</td>
+        <td class="num">₹${s.retail_price.toFixed(2)}</td>
+        <td class="num">₹${(s.retail_price * s.quantity).toFixed(2)}</td>
+        <td class="num">${((s.volume_points ?? 0) * s.quantity).toFixed(2)}</td>
+        <td class="num status-${s.payment_status}">${s.payment_status}</td>
+        <td class="num">${s.payment_method ?? '—'}</td>
+      </tr>`
+    )
+    .join('');
+
+  const totalPending = group.pendingAmount;
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Invoice – ${group.customer_name}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+    .meta div { line-height: 1.8; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 12px; border-bottom: 2px solid #ddd; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; }
+    .totals { margin-left: auto; width: 260px; }
+    .totals tr td { border: none; padding: 4px 10px; }
+    .totals tr:last-child td { font-weight: bold; font-size: 14px; border-top: 2px solid #111; padding-top: 8px; }
+    .status-done { color: #16a34a; font-weight: 600; }
+    .status-pending { color: #d97706; font-weight: 600; }
+    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Sales Invoice</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>Bill To:</strong><br/>
+      ${group.customer_name}<br/>
+      ${group.reference ? `Ref: ${group.reference}` : ''}
+    </div>
+    <div style="text-align:right">
+      <strong>Date:</strong> ${group.date}<br/>
+      <strong>Manager:</strong> ${managerName}
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit Price</th>
+        <th class="num">Total</th>
+        <th class="num">VP</th>
+        <th class="num">Status</th>
+        <th class="num">Method</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="num">₹${group.totalSellingAmount.toFixed(2)}</td></tr>
+    ${totalPending > 0 ? `<tr><td style="color:#d97706">Pending</td><td class="num" style="color:#d97706">₹${totalPending.toFixed(2)}</td></tr>` : ''}
+    <tr><td>Total</td><td class="num">₹${group.totalSellingAmount.toFixed(2)}</td></tr>
+  </table>
+  <div class="footer">Generated on ${new Date().toLocaleString()} · Herbalife Sales Manager</div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
+
 export default function SalesPage() {
   const { toast } = useToast();
   const [sales, setSales] = useState<Sale[]>([]);
@@ -62,8 +215,13 @@ export default function SalesPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [editSale, setEditSale] = useState<Sale | null>(null);
   const [editOpen, setEditOpen] = useState(false);
-  const [invoiceCustomer, setInvoiceCustomer] = useState('');
+  const [invoiceGroup, setInvoiceGroup] = useState<SaleGroup | null>(null);
   const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [managerName, setManagerName] = useState('Manager');
+
+  // Customer-wide invoice (existing)
+  const [invoiceCustomer, setInvoiceCustomer] = useState('');
+  const [customerInvoiceOpen, setCustomerInvoiceOpen] = useState(false);
 
   // Per-line product search
   const [productSearches, setProductSearches] = useState<string[]>(['']);
@@ -94,12 +252,17 @@ export default function SalesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const [{ data: salesData }, { data: productsData }] = await Promise.all([
+    const [{ data: salesData }, { data: productsData }, { data: { user } }] = await Promise.all([
       supabase.from('sales').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('products').select('*').order('name'),
+      supabase.auth.getUser(),
     ]);
     setSales(salesData ?? []);
     setProducts(productsData ?? []);
+    if (user) {
+      const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
+      if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
+    }
     setLoading(false);
   }, []);
 
@@ -112,6 +275,8 @@ export default function SalesPage() {
     if (filterDateTo && s.date > filterDateTo) return false;
     return true;
   });
+
+  const saleGroups = groupSales(filteredSales);
 
   const getFilteredProducts = (search: string) =>
     products.filter((p) => p.name.toLowerCase().includes(search.toLowerCase())).slice(0, 10);
@@ -164,7 +329,7 @@ export default function SalesPage() {
 
     const { error } = await supabase.from('sales').insert(rows);
     if (error) { toast({ title: 'Add failed', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: `${rows.length} sale${rows.length > 1 ? 's' : ''} added` });
+    toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
     setAddOpen(false);
     resetAddForm();
     fetchData();
@@ -207,33 +372,64 @@ export default function SalesPage() {
     setEditOpen(true);
   };
 
-  const handleDelete = async (id: number) => {
-    if (!confirm('Delete this sale?')) return;
+  // Delete a single product row
+  const handleDeleteItem = async (id: number) => {
+    if (!confirm('Remove this product from the sale?')) return;
     const supabase = createClient();
     await supabase.from('sales').delete().eq('id', id);
+    toast({ title: 'Product removed' });
+    fetchData();
+    // refresh invoice group
+    if (invoiceGroup) {
+      const updated = sales.filter((s) => s.id !== id);
+      const reGrouped = groupSales(updated);
+      const found = reGrouped.find((g) => g.key === invoiceGroup.key);
+      if (found) setInvoiceGroup(found);
+      else setInvoiceOpen(false);
+    }
+  };
+
+  // Delete entire sale group
+  const handleDeleteGroup = async (group: SaleGroup) => {
+    if (!confirm(`Delete all ${group.items.length} product(s) in this sale?`)) return;
+    const supabase = createClient();
+    await supabase.from('sales').delete().in('id', group.allIds);
     toast({ title: 'Sale deleted' });
     fetchData();
   };
 
-  // Invoice
-  const invoiceSales = sales.filter((s) => s.customer_name.toLowerCase() === invoiceCustomer.toLowerCase());
-  const invoiceTotalRetail = invoiceSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
-  const invoiceTotalMy = invoiceSales.reduce((a, s) => a + s.my_price * s.quantity, 0);
-  const invoicePending = invoiceSales.filter((s) => s.payment_status === 'pending');
-
-  const handleMarkPaid = async (method: 'online' | 'cash') => {
+  // Mark pending items in group as paid
+  const handleMarkGroupPaid = async (group: SaleGroup, method: 'online' | 'cash') => {
     const supabase = createClient();
-    await supabase.from('sales').update({ payment_status: 'done', payment_method: method }).in('id', invoicePending.map((s) => s.id));
+    const pendingIds = group.items.filter((s) => s.payment_status === 'pending').map((s) => s.id);
+    await supabase.from('sales').update({ payment_status: 'done', payment_method: method }).in('id', pendingIds);
     toast({ title: 'Payments marked as done' });
     fetchData();
     setInvoiceOpen(false);
+  };
+
+  // Customer-wide invoice
+  const uniqueCustomers = Array.from(new Set(sales.map((s) => s.customer_name)));
+  const customerInvoiceSales = sales.filter((s) => s.customer_name.toLowerCase() === invoiceCustomer.toLowerCase());
+  const customerInvoicePending = customerInvoiceSales.filter((s) => s.payment_status === 'pending');
+
+  const handleMarkCustomerPaid = async (method: 'online' | 'cash') => {
+    const supabase = createClient();
+    await supabase.from('sales').update({ payment_status: 'done', payment_method: method }).in('id', customerInvoicePending.map((s) => s.id));
+    toast({ title: 'Payments marked as done' });
+    fetchData();
+    setCustomerInvoiceOpen(false);
     setInvoiceCustomer('');
   };
 
-  const uniqueCustomers = Array.from(new Set(sales.map((s) => s.customer_name)));
+  // Summary totals
   const totalRevenue = filteredSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
-  const totalProfit = filteredSales.reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalProfit = filteredSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalPendingAmount = filteredSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalVolumePoints = filteredSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+
+  const statusBadgeVariant = (status: SaleGroup['status']) =>
+    status === 'done' ? 'success' : status === 'pending' ? 'warning' : 'secondary';
 
   return (
     <div className="space-y-6">
@@ -244,8 +440,8 @@ export default function SalesPage() {
         </div>
         <div className="flex gap-2">
 
-          {/* Invoice */}
-          <Dialog open={invoiceOpen} onOpenChange={(v) => { setInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
+          {/* Customer-wide Invoice */}
+          <Dialog open={customerInvoiceOpen} onOpenChange={(v) => { setCustomerInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
             <DialogTrigger asChild>
               <Button variant="outline" className="gap-2"><Receipt className="h-4 w-4" />Invoice</Button>
             </DialogTrigger>
@@ -257,7 +453,7 @@ export default function SalesPage() {
                   <Input placeholder="Type customer name..." value={invoiceCustomer} onChange={(e) => setInvoiceCustomer(e.target.value)} list="inv-cust" />
                   <datalist id="inv-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
                 </div>
-                {invoiceCustomer && invoiceSales.length > 0 && (
+                {invoiceCustomer && customerInvoiceSales.length > 0 && (
                   <div className="space-y-3">
                     <div className="border rounded-lg overflow-hidden">
                       <Table>
@@ -270,7 +466,7 @@ export default function SalesPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {invoiceSales.map((s) => (
+                          {customerInvoiceSales.map((s) => (
                             <TableRow key={s.id}>
                               <TableCell className="text-sm">{s.product_name}</TableCell>
                               <TableCell className="text-right text-sm">{s.quantity}</TableCell>
@@ -282,16 +478,16 @@ export default function SalesPage() {
                       </Table>
                     </div>
                     <div className="bg-muted p-3 rounded-lg space-y-1 text-sm">
-                      <div className="flex justify-between"><span>Total Selling</span><span className="font-medium">{formatCurrency(invoiceTotalRetail)}</span></div>
-                      <div className="flex justify-between"><span>My Cost</span><span>{formatCurrency(invoiceTotalMy)}</span></div>
-                      <div className="flex justify-between font-bold border-t pt-1 mt-1"><span>Profit</span><span className="text-green-600">{formatCurrency(invoiceTotalRetail - invoiceTotalMy)}</span></div>
+                      <div className="flex justify-between"><span>Total Selling</span><span className="font-medium">{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.retail_price * s.quantity, 0))}</span></div>
+                      <div className="flex justify-between"><span>My Cost</span><span>{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.my_price * s.quantity, 0))}</span></div>
+                      <div className="flex justify-between font-bold border-t pt-1 mt-1"><span>Profit</span><span className="text-green-600">{formatCurrency(customerInvoiceSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0))}</span></div>
                     </div>
-                    {invoicePending.length > 0 ? (
+                    {customerInvoicePending.length > 0 ? (
                       <div>
-                        <p className="text-sm font-medium mb-2">{invoicePending.length} pending. Mark as done:</p>
+                        <p className="text-sm font-medium mb-2">{customerInvoicePending.length} pending. Mark as done:</p>
                         <div className="flex gap-2">
-                          <Button size="sm" className="flex-1" onClick={() => handleMarkPaid('online')}>Online</Button>
-                          <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkPaid('cash')}>Cash</Button>
+                          <Button size="sm" className="flex-1" onClick={() => handleMarkCustomerPaid('online')}>Online</Button>
+                          <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkCustomerPaid('cash')}>Cash</Button>
                         </div>
                       </div>
                     ) : (
@@ -299,7 +495,7 @@ export default function SalesPage() {
                     )}
                   </div>
                 )}
-                {invoiceCustomer && invoiceSales.length === 0 && <p className="text-muted-foreground text-sm text-center py-4">No sales found for this customer.</p>}
+                {invoiceCustomer && customerInvoiceSales.length === 0 && <p className="text-muted-foreground text-sm text-center py-4">No sales found for this customer.</p>}
               </div>
             </DialogContent>
           </Dialog>
@@ -356,7 +552,6 @@ export default function SalesPage() {
                           )}
                         </div>
 
-                        {/* Product search */}
                         <div className="relative">
                           <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -409,7 +604,6 @@ export default function SalesPage() {
                           </div>
                         </div>
 
-                        {/* Live totals */}
                         <div className="grid grid-cols-3 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
                           <div>
                             <p className="text-muted-foreground">My Total</p>
@@ -434,7 +628,6 @@ export default function SalesPage() {
                   })}
                 </div>
 
-                {/* Grand total when multiple products */}
                 {fields.length > 1 && (
                   <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3 flex justify-between items-center">
                     <span className="text-sm font-medium">Grand Total ({fields.length} products)</span>
@@ -475,15 +668,15 @@ export default function SalesPage() {
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-600">{formatCurrency(totalProfit)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Transactions</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{filteredSales.length}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Amount</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-orange-500">{formatCurrency(totalPendingAmount)}</p></CardContent></Card>
       </div>
 
-      {/* Table */}
+      {/* Grouped Sales Table */}
       <Card>
         <CardContent className="p-0">
           {loading ? (
             <div className="p-8 text-center text-muted-foreground">Loading...</div>
-          ) : filteredSales.length === 0 ? (
+          ) : saleGroups.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">No sales found.</div>
           ) : (
             <div className="overflow-x-auto">
@@ -492,44 +685,44 @@ export default function SalesPage() {
                   <TableRow>
                     <TableHead>Date</TableHead>
                     <TableHead>Customer</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
-                    <TableHead className="text-right hidden md:table-cell">My Total</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">Selling Price</TableHead>
-                    <TableHead className="text-right">Selling Total</TableHead>
-                    <TableHead className="text-right">Profit</TableHead>
-                    <TableHead className="text-right hidden lg:table-cell">VP</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden lg:table-cell">Method</TableHead>
-                    <TableHead className="hidden lg:table-cell">Comments</TableHead>
+                    <TableHead className="hidden md:table-cell">Reference</TableHead>
+                    <TableHead className="text-right">Products</TableHead>
+                    <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Profit</TableHead>
+                    <TableHead className="text-right hidden lg:table-cell">Pending</TableHead>
+                    <TableHead className="hidden md:table-cell">Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredSales.map((sale) => (
-                    <TableRow key={sale.id}>
-                      <TableCell className="text-sm">{formatDate(sale.date)}</TableCell>
-                      <TableCell className="text-sm font-medium">{sale.customer_name}</TableCell>
-                      <TableCell className="text-sm max-w-[100px] truncate">{sale.product_name}</TableCell>
-                      <TableCell className="text-right text-sm">{sale.quantity}</TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground hidden md:table-cell">{formatCurrency(sale.my_price)}</TableCell>
-                      <TableCell className="text-right text-sm font-medium hidden md:table-cell">{formatCurrency(sale.my_price * sale.quantity)}</TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground hidden lg:table-cell">{formatCurrency(sale.retail_price)}</TableCell>
-                      <TableCell className="text-right text-sm font-medium">{formatCurrency(sale.retail_price * sale.quantity)}</TableCell>
-                      <TableCell className="text-right text-sm text-green-600 font-medium">{formatCurrency(sale.profit * sale.quantity)}</TableCell>
-                      <TableCell className="text-right text-sm text-purple-600 hidden lg:table-cell">{((sale.volume_points ?? 0) * sale.quantity).toFixed(2)}</TableCell>
-                      <TableCell>
-                        <Badge variant={sale.payment_status === 'done' ? 'success' : 'warning'}>{sale.payment_status}</Badge>
+                  {saleGroups.map((group) => (
+                    <TableRow
+                      key={group.key}
+                      className="cursor-pointer hover:bg-accent/50"
+                      onClick={() => { setInvoiceGroup(group); setInvoiceOpen(true); }}
+                    >
+                      <TableCell className="text-sm">{formatDate(group.date)}</TableCell>
+                      <TableCell className="text-sm font-medium">{group.customer_name}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground hidden md:table-cell">{group.reference ?? '—'}</TableCell>
+                      <TableCell className="text-right text-sm">{group.items.length}</TableCell>
+                      <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
+                      <TableCell className="text-right text-sm font-medium">{formatCurrency(group.totalSellingAmount)}</TableCell>
+                      <TableCell className="text-right text-sm text-green-600 font-medium hidden lg:table-cell">{formatCurrency(group.totalProfit)}</TableCell>
+                      <TableCell className="text-right text-sm hidden lg:table-cell">
+                        {group.pendingAmount > 0 ? <span className="text-orange-500 font-medium">{formatCurrency(group.pendingAmount)}</span> : <span className="text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground capitalize hidden lg:table-cell">{sale.payment_method ?? '-'}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate hidden lg:table-cell" title={sale.comments ?? ''}>{sale.comments ?? '-'}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <Badge variant={statusBadgeVariant(group.status)}>
+                          {group.status === 'mixed' ? 'partial' : group.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 justify-end">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(sale)}>
-                            <Pencil className="h-3.5 w-3.5" />
+                          <Button size="icon" variant="ghost" className="h-8 w-8" title="View Invoice" onClick={(e) => { e.stopPropagation(); setInvoiceGroup(group); setInvoiceOpen(true); }}>
+                            <Eye className="h-3.5 w-3.5" />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDelete(sale.id)}>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" title="Delete Sale" onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group); }}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
@@ -543,10 +736,113 @@ export default function SalesPage() {
         </CardContent>
       </Card>
 
+      {/* Invoice Dialog (per sale group) */}
+      <Dialog open={invoiceOpen} onOpenChange={(v) => { setInvoiceOpen(v); if (!v) setInvoiceGroup(null); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-lg">Invoice — {invoiceGroup?.customer_name}</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              {invoiceGroup && formatDate(invoiceGroup.date)}
+              {invoiceGroup?.reference && ` · Ref: ${invoiceGroup.reference}`}
+            </p>
+          </DialogHeader>
+
+          {invoiceGroup && (
+            <div className="space-y-4">
+              <div className="flex justify-end">
+                <Button size="sm" variant="outline" className="gap-2" onClick={() => invoiceGroup && printInvoice(invoiceGroup, managerName)}>
+                  <Download className="h-4 w-4" />Download Invoice
+                </Button>
+              </div>
+              {/* Products table */}
+              <div className="border rounded-lg overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-full">Product</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Unit Price</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Total</TableHead>
+                      <TableHead className="text-center whitespace-nowrap">Status</TableHead>
+                      <TableHead className="text-center whitespace-nowrap">Method</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {invoiceGroup.items.map((s) => (
+                      <TableRow key={s.id}>
+                        <TableCell className="text-sm font-medium">{s.product_name}</TableCell>
+                        <TableCell className="text-right text-sm">{s.quantity}</TableCell>
+                        <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.retail_price)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold whitespace-nowrap">{formatCurrency(s.retail_price * s.quantity)}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge>
+                        </TableCell>
+                        <TableCell className="text-center text-sm text-muted-foreground capitalize whitespace-nowrap">
+                          {s.payment_method ?? '—'}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex gap-1 justify-end">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { handleEdit(s); setInvoiceOpen(false); }}>
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteItem(s.id)}>
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Totals */}
+              <div className="bg-muted rounded-lg p-4 space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Total Selling</span>
+                  <span className="font-semibold">{formatCurrency(invoiceGroup.totalSellingAmount)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">My Cost</span>
+                  <span>{formatCurrency(invoiceGroup.totalMyAmount)}</span>
+                </div>
+                {invoiceGroup.pendingAmount > 0 && (
+                  <div className="flex justify-between text-orange-500">
+                    <span>Pending Amount</span>
+                    <span className="font-semibold">{formatCurrency(invoiceGroup.pendingAmount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between font-bold border-t pt-2 mt-1">
+                  <span>Profit (received)</span>
+                  <span className="text-green-600">{formatCurrency(invoiceGroup.totalProfit)}</span>
+                </div>
+              </div>
+
+              {/* Mark as paid */}
+              {invoiceGroup.status !== 'done' && (
+                <div className="border rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium">
+                    {invoiceGroup.items.filter((s) => s.payment_status === 'pending').length} item(s) pending — mark as paid:
+                  </p>
+                  <div className="flex gap-2">
+                    <Button size="sm" className="flex-1" onClick={() => handleMarkGroupPaid(invoiceGroup, 'online')}>Online</Button>
+                    <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkGroupPaid(invoiceGroup, 'cash')}>Cash</Button>
+                  </div>
+                </div>
+              )}
+              {invoiceGroup.status === 'done' && (
+                <Badge variant="success" className="w-full justify-center py-2">All payments received</Badge>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={(v) => { setEditOpen(v); if (!v) setEditSale(null); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Edit Sale</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Edit Product</DialogTitle></DialogHeader>
           <form onSubmit={handleEditSubmit(onEditSubmit)} className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -589,7 +885,6 @@ export default function SalesPage() {
                 <Input type="number" step="0.01" {...regEdit('retail_price')} />
               </div>
             </div>
-            {/* Live totals */}
             <div className="grid grid-cols-3 gap-2 bg-muted rounded-md px-3 py-2 text-xs border">
               <div><p className="text-muted-foreground">My Total</p><p className="font-semibold">{formatCurrency(editMyPrice * editQty)}</p></div>
               <div><p className="text-muted-foreground">Selling Total</p><p className="font-semibold">{formatCurrency(editRetailPrice * editQty)}</p></div>
