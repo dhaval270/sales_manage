@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Sale, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Receipt, Search, X, Eye, Download } from 'lucide-react';
+import { Plus, Pencil, Trash2, Receipt, Search, X, Eye, Download, FileText, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -205,6 +205,132 @@ function printInvoice(group: SaleGroup, managerName: string) {
   }
 }
 
+// ─── Period Report print ─────────────────────────────────────────────────────
+
+function printPeriodReport(
+  periodSales: Sale[],
+  from: string,
+  to: string,
+  managerName: string,
+) {
+  const revenue = periodSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const myCost = periodSales.reduce((a, s) => a + s.my_price * s.quantity, 0);
+  const profit = periodSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const pendingAmount = periodSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const volumePoints = periodSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+  const totalQty = periodSales.reduce((a, s) => a + s.quantity, 0);
+
+  // Group by customer for breakdown
+  const byCustomer = new Map<string, { revenue: number; profit: number; pending: number; vp: number }>();
+  for (const s of periodSales) {
+    if (!byCustomer.has(s.customer_name)) byCustomer.set(s.customer_name, { revenue: 0, profit: 0, pending: 0, vp: 0 });
+    const c = byCustomer.get(s.customer_name)!;
+    c.revenue += s.retail_price * s.quantity;
+    if (s.payment_status === 'done') c.profit += s.profit * s.quantity;
+    if (s.payment_status === 'pending') c.pending += s.retail_price * s.quantity;
+    c.vp += (s.volume_points ?? 0) * s.quantity;
+  }
+
+  const customerRows = Array.from(byCustomer.entries())
+    .sort((a, b) => b[1].revenue - a[1].revenue)
+    .map(([name, d]) => `
+      <tr>
+        <td>${name}</td>
+        <td class="num">₹${d.revenue.toFixed(2)}</td>
+        <td class="num" style="color:#16a34a">₹${d.profit.toFixed(2)}</td>
+        <td class="num">${d.vp.toFixed(2)}</td>
+        <td class="num" style="color:${d.pending > 0 ? '#d97706' : '#16a34a'}">${d.pending > 0 ? `₹${d.pending.toFixed(2)}` : '—'}</td>
+      </tr>`)
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Period Report ${from} to ${to}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    h2 { font-size: 15px; margin: 24px 0 10px; color: #333; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
+    .card .label { font-size: 11px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 20px; font-weight: 700; }
+    .card.revenue .value { color: #1d4ed8; }
+    .card.profit .value { color: #16a34a; }
+    .card.vp .value { color: #7c3aed; }
+    .card.pending .value { color: #d97706; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 12px; border-bottom: 2px solid #ddd; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; }
+    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Period Sales Report</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>Period:</strong> ${from} to ${to}<br/>
+      <strong>Total Transactions:</strong> ${periodSales.length} items (${totalQty} units)
+    </div>
+    <div style="text-align:right">
+      <strong>Manager:</strong> ${managerName}<br/>
+      <strong>Generated:</strong> ${new Date().toLocaleString()}
+    </div>
+  </div>
+
+  <div class="summary-grid">
+    <div class="card revenue"><div class="label">Total Revenue</div><div class="value">₹${revenue.toFixed(2)}</div></div>
+    <div class="card profit"><div class="label">Total Profit</div><div class="value">₹${profit.toFixed(2)}</div></div>
+    <div class="card vp"><div class="label">Volume Points</div><div class="value">${volumePoints.toFixed(2)}</div></div>
+    <div class="card pending"><div class="label">Pending Amount</div><div class="value">₹${pendingAmount.toFixed(2)}</div></div>
+  </div>
+
+  <h2>Customer Breakdown</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Customer</th>
+        <th class="num">Revenue</th>
+        <th class="num">Profit</th>
+        <th class="num">Volume Points</th>
+        <th class="num">Pending</th>
+      </tr>
+    </thead>
+    <tbody>${customerRows}</tbody>
+    <tfoot>
+      <tr style="font-weight:bold;background:#f9fafb">
+        <td>TOTAL</td>
+        <td class="num">₹${revenue.toFixed(2)}</td>
+        <td class="num" style="color:#16a34a">₹${profit.toFixed(2)}</td>
+        <td class="num">${volumePoints.toFixed(2)}</td>
+        <td class="num" style="color:#d97706">${pendingAmount > 0 ? `₹${pendingAmount.toFixed(2)}` : '—'}</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;font-size:12px;color:#555">
+    <strong>Notes:</strong> Profit is calculated only from received payments (done status). Pending amount represents unpaid sales. My Cost for this period: ₹${myCost.toFixed(2)}.
+  </div>
+
+  <div class="footer">Herbalife Sales Manager · Period Report · ${from} to ${to}</div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function SalesPage() {
@@ -222,6 +348,15 @@ export default function SalesPage() {
   // Customer-wide invoice (existing)
   const [invoiceCustomer, setInvoiceCustomer] = useState('');
   const [customerInvoiceOpen, setCustomerInvoiceOpen] = useState(false);
+
+  // Period report
+  const [periodReportOpen, setPeriodReportOpen] = useState(false);
+  const [periodFrom, setPeriodFrom] = useState('');
+  const [periodTo, setPeriodTo] = useState('');
+
+  // Reset
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
 
   // Per-line product search
   const [productSearches, setProductSearches] = useState<string[]>(['']);
@@ -398,6 +533,19 @@ export default function SalesPage() {
     fetchData();
   };
 
+  // Reset all sales
+  const handleResetAll = async () => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from('sales').delete().eq('user_id', user.id);
+    if (error) { toast({ title: 'Reset failed', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'All sales deleted', description: 'Your sales data has been reset.' });
+    setResetOpen(false);
+    setResetConfirmText('');
+    fetchData();
+  };
+
   // Mark pending items in group as paid
   const handleMarkGroupPaid = async (group: SaleGroup, method: 'online' | 'cash') => {
     const supabase = createClient();
@@ -422,6 +570,17 @@ export default function SalesPage() {
     setInvoiceCustomer('');
   };
 
+  // Period report filtered sales
+  const periodSales = sales.filter((s) => {
+    if (periodFrom && s.date < periodFrom) return false;
+    if (periodTo && s.date > periodTo) return false;
+    return true;
+  });
+  const periodRevenue = periodSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const periodProfit = periodSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const periodPending = periodSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const periodVP = periodSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+
   // Summary totals
   const totalRevenue = filteredSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalProfit = filteredSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
@@ -439,6 +598,103 @@ export default function SalesPage() {
           <p className="text-muted-foreground text-sm">Product revenue management</p>
         </div>
         <div className="flex gap-2">
+
+          {/* Reset All Sales */}
+          <Dialog open={resetOpen} onOpenChange={(v) => { setResetOpen(v); if (!v) setResetConfirmText(''); }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive">
+                <RotateCcw className="h-4 w-4" />Reset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="text-destructive">Reset All Sales</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  This will permanently delete <strong>all {sales.length} sale records</strong>. This action cannot be undone.
+                </p>
+                <div className="space-y-2">
+                  <Label className="text-sm">Type <span className="font-mono font-bold">RESET</span> to confirm</Label>
+                  <Input
+                    placeholder="RESET"
+                    value={resetConfirmText}
+                    onChange={(e) => setResetConfirmText(e.target.value)}
+                    className="border-destructive/40 focus-visible:ring-destructive/30"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => { setResetOpen(false); setResetConfirmText(''); }}>Cancel</Button>
+                  <Button
+                    variant="destructive"
+                    className="flex-1"
+                    disabled={resetConfirmText !== 'RESET'}
+                    onClick={handleResetAll}
+                  >
+                    Delete All
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          {/* Period Report */}
+          <Dialog open={periodReportOpen} onOpenChange={(v) => { setPeriodReportOpen(v); if (!v) { setPeriodFrom(''); setPeriodTo(''); } }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2"><FileText className="h-4 w-4" />Period Report</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+              <DialogHeader><DialogTitle>Period Sales Report</DialogTitle></DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">Select a date range to generate a summary report with revenue, profit, volume, and pending amounts.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>From Date</Label>
+                    <Input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>To Date</Label>
+                    <Input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} />
+                  </div>
+                </div>
+
+                {(periodFrom || periodTo) && (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Total Revenue</p>
+                        <p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatCurrency(periodRevenue)}</p>
+                      </div>
+                      <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Total Profit</p>
+                        <p className="text-lg font-bold text-green-700 dark:text-green-400">{formatCurrency(periodProfit)}</p>
+                      </div>
+                      <div className="bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Volume Points</p>
+                        <p className="text-lg font-bold text-purple-700 dark:text-purple-400">{periodVP.toFixed(2)} VP</p>
+                      </div>
+                      <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Pending Amount</p>
+                        <p className="text-lg font-bold text-orange-600 dark:text-orange-400">{formatCurrency(periodPending)}</p>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground text-center">{periodSales.length} sale records · {periodSales.reduce((a, s) => a + s.quantity, 0)} units</p>
+                    {periodSales.length > 0 ? (
+                      <Button className="w-full gap-2" onClick={() => printPeriodReport(periodSales, periodFrom || 'all', periodTo || 'all', managerName)}>
+                        <Download className="h-4 w-4" />Download Report
+                      </Button>
+                    ) : (
+                      <p className="text-center text-sm text-muted-foreground py-2">No sales found in this period.</p>
+                    )}
+                  </div>
+                )}
+
+                {!periodFrom && !periodTo && (
+                  <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
 
           {/* Customer-wide Invoice */}
           <Dialog open={customerInvoiceOpen} onOpenChange={(v) => { setCustomerInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
