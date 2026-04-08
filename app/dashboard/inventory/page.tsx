@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Inventory, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Search, FileText, Download } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, FileText, Download, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -150,6 +150,8 @@ export default function InventoryPage() {
   const [periodReportOpen, setPeriodReportOpen] = useState(false);
   const [periodFrom, setPeriodFrom] = useState('');
   const [periodTo, setPeriodTo] = useState('');
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
 
   // Filters
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -238,6 +240,18 @@ export default function InventoryPage() {
     fetchData();
   };
 
+  const handleResetAll = async () => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from('inventory').delete().eq('user_id', user.id);
+    if (error) { toast({ title: 'Reset failed', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'All inventory deleted', description: 'Your inventory data has been reset.' });
+    setResetOpen(false);
+    setResetConfirmText('');
+    fetchData();
+  };
+
   const handleDelete = async (id: number) => {
     if (!confirm('Delete this inventory item?')) return;
     const supabase = createClient();
@@ -283,6 +297,40 @@ export default function InventoryPage() {
           <p className="text-muted-foreground text-sm">Stock management</p>
         </div>
         <div className="flex gap-2">
+          {/* Reset All Inventory */}
+          <Dialog open={resetOpen} onOpenChange={(v) => { setResetOpen(v); if (!v) setResetConfirmText(''); }}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive">
+                <RotateCcw className="h-4 w-4" />Reset
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle className="text-destructive">Reset All Inventory</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  This will permanently delete <strong>all {items.length} inventory records</strong>. This action cannot be undone.
+                </p>
+                <div className="space-y-2">
+                  <Label className="text-sm">Type <span className="font-mono font-bold">RESET</span> to confirm</Label>
+                  <Input
+                    placeholder="RESET"
+                    value={resetConfirmText}
+                    onChange={(e) => setResetConfirmText(e.target.value)}
+                    className="border-destructive/40 focus-visible:ring-destructive/30"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => { setResetOpen(false); setResetConfirmText(''); }}>Cancel</Button>
+                  <Button variant="destructive" className="flex-1" disabled={resetConfirmText !== 'RESET'} onClick={handleResetAll}>
+                    Delete All
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
           {/* Period Report */}
           <Dialog open={periodReportOpen} onOpenChange={(v) => { setPeriodReportOpen(v); if (!v) { setPeriodFrom(''); setPeriodTo(''); } }}>
             <DialogTrigger asChild>
