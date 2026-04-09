@@ -224,6 +224,67 @@ export interface Database {
           created_at?: string;
         };
       };
+      center_memberships: {
+        Row: {
+          id: number;
+          user_id: string;
+          customer_name: string;
+          reference: string | null;
+          total_shakes: number;
+          price: number;
+          payment_status: 'pending' | 'paid';
+          start_date: string;
+          comments: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          user_id: string;
+          customer_name: string;
+          reference?: string | null;
+          total_shakes: number;
+          price: number;
+          payment_status?: 'pending' | 'paid';
+          start_date: string;
+          comments?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          user_id?: string;
+          customer_name?: string;
+          reference?: string | null;
+          total_shakes?: number;
+          price?: number;
+          payment_status?: 'pending' | 'paid';
+          start_date?: string;
+          comments?: string | null;
+          created_at?: string;
+        };
+      };
+      center_membership_visits: {
+        Row: {
+          id: number;
+          membership_id: number;
+          user_id: string;
+          visit_date: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          membership_id: number;
+          user_id: string;
+          visit_date: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          membership_id?: number;
+          user_id?: string;
+          visit_date?: string;
+          created_at?: string;
+        };
+      };
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };
@@ -238,3 +299,5 @@ export type Inventory = Database['public']['Tables']['inventory']['Row'];
 export type Sale = Database['public']['Tables']['sales']['Row'];
 export type CenterMenu = Database['public']['Tables']['center_menu']['Row'];
 export type CenterSale = Database['public']['Tables']['center_sales']['Row'];
+export type CenterMembership = Database['public']['Tables']['center_memberships']['Row'];
+export type CenterMembershipVisit = Database['public']['Tables']['center_membership_visits']['Row'];
