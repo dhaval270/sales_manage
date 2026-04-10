@@ -32,9 +32,9 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/login', '/signup', '/auth/callback'];
+  const publicRoutes = ['/', '/login', '/signup', '/auth/callback'];
   const isPublicRoute = publicRoutes.some((route) =>
-    pathname.startsWith(route)
+    pathname === route || (route !== '/' && pathname.startsWith(route))
   );
 
   if (!user && !isPublicRoute) {
@@ -43,15 +43,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && (pathname === '/login' || pathname === '/signup')) {
+  if (user && (pathname === '/login' || pathname === '/signup' || pathname === '/')) {
     const url = request.nextUrl.clone();
     url.pathname = '/dashboard';
-    return NextResponse.redirect(url);
-  }
-
-  if (pathname === '/') {
-    const url = request.nextUrl.clone();
-    url.pathname = user ? '/dashboard' : '/login';
     return NextResponse.redirect(url);
   }
 
