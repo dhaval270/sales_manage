@@ -121,16 +121,23 @@ function groupSales(sales: Sale[]): SaleGroup[] {
 function printInvoice(group: SaleGroup, managerName: string) {
   const rows = group.items
     .map(
-      (s) => `
+      (s) => {
+        const totalMy = s.my_price * s.quantity;
+        const totalRetail = s.retail_price * s.quantity;
+        const profit = totalRetail - totalMy;
+        return `
       <tr>
         <td>${s.product_name}</td>
         <td class="num">${s.quantity}</td>
+        <td class="num">₹${s.my_price.toFixed(2)}</td>
         <td class="num">₹${s.retail_price.toFixed(2)}</td>
-        <td class="num">₹${(s.retail_price * s.quantity).toFixed(2)}</td>
-        <td class="num">${((s.volume_points ?? 0) * s.quantity).toFixed(2)}</td>
+        <td class="num">₹${totalMy.toFixed(2)}</td>
+        <td class="num">₹${totalRetail.toFixed(2)}</td>
+        <td class="num" style="color:#16a34a;font-weight:600">₹${profit.toFixed(2)}</td>
         <td class="num status-${s.payment_status}">${s.payment_status}</td>
         <td class="num">${s.payment_method ?? '—'}</td>
-      </tr>`
+      </tr>`;
+      }
     )
     .join('');
 
@@ -179,9 +186,11 @@ function printInvoice(group: SaleGroup, managerName: string) {
       <tr>
         <th>Product</th>
         <th class="num">Qty</th>
-        <th class="num">Unit Price</th>
-        <th class="num">Total</th>
-        <th class="num">VP</th>
+        <th class="num">My Price</th>
+        <th class="num">Retail Price</th>
+        <th class="num">Total My</th>
+        <th class="num">Total Retail</th>
+        <th class="num">Profit</th>
         <th class="num">Status</th>
         <th class="num">Method</th>
       </tr>
@@ -761,9 +770,9 @@ export default function SalesPage() {
             <DialogTrigger asChild>
               <Button className="gap-2"><Plus className="h-4 w-4" />Add Sale</Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
               <DialogHeader><DialogTitle>Add Sale</DialogTitle></DialogHeader>
-              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 overflow-y-auto flex-1 pr-1">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Date</Label>
@@ -994,7 +1003,7 @@ export default function SalesPage() {
 
       {/* Invoice Dialog (per sale group) */}
       <Dialog open={invoiceOpen} onOpenChange={(v) => { setInvoiceOpen(v); if (!v) setInvoiceGroup(null); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="text-lg">Invoice — {invoiceGroup?.customer_name}</DialogTitle>
             <p className="text-sm text-muted-foreground">
@@ -1004,7 +1013,7 @@ export default function SalesPage() {
           </DialogHeader>
 
           {invoiceGroup && (
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto flex-1 pr-1">
               <div className="flex justify-end">
                 <Button size="sm" variant="outline" className="gap-2" onClick={() => invoiceGroup && printInvoice(invoiceGroup, managerName)}>
                   <Download className="h-4 w-4" />Download Invoice
@@ -1015,10 +1024,13 @@ export default function SalesPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-full">Product</TableHead>
+                      <TableHead>Product</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
-                      <TableHead className="text-right whitespace-nowrap">Unit Price</TableHead>
-                      <TableHead className="text-right whitespace-nowrap">Total</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">My Price</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Retail Price</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Total My</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Total Retail</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Profit</TableHead>
                       <TableHead className="text-center whitespace-nowrap">Status</TableHead>
                       <TableHead className="text-center whitespace-nowrap">Method</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -1029,8 +1041,11 @@ export default function SalesPage() {
                       <TableRow key={s.id}>
                         <TableCell className="text-sm font-medium">{s.product_name}</TableCell>
                         <TableCell className="text-right text-sm">{s.quantity}</TableCell>
+                        <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.my_price)}</TableCell>
                         <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.retail_price)}</TableCell>
+                        <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.my_price * s.quantity)}</TableCell>
                         <TableCell className="text-right text-sm font-semibold whitespace-nowrap">{formatCurrency(s.retail_price * s.quantity)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold whitespace-nowrap text-green-600">{formatCurrency((s.retail_price - s.my_price) * s.quantity)}</TableCell>
                         <TableCell className="text-center">
                           <Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge>
                         </TableCell>
@@ -1097,9 +1112,9 @@ export default function SalesPage() {
 
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={(v) => { setEditOpen(v); if (!v) setEditSale(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
           <DialogHeader><DialogTitle>Edit Product</DialogTitle></DialogHeader>
-          <form onSubmit={handleEditSubmit(onEditSubmit)} className="space-y-4">
+          <form onSubmit={handleEditSubmit(onEditSubmit)} className="space-y-4 overflow-y-auto flex-1 pr-1">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Date</Label>
