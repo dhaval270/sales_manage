@@ -133,7 +133,7 @@ function printInvoice(group: SaleGroup, managerName: string) {
         <td class="num">₹${s.retail_price.toFixed(2)}</td>
         <td class="num">₹${totalMy.toFixed(2)}</td>
         <td class="num">₹${totalRetail.toFixed(2)}</td>
-        <td class="num" style="color:#16a34a;font-weight:600">₹${profit.toFixed(2)}</td>
+        <td class="num" style="${s.payment_status === 'done' ? 'color:#16a34a;font-weight:600' : 'color:#999'}">${s.payment_status === 'done' ? `₹${profit.toFixed(2)}` : '—'}</td>
         <td class="num status-${s.payment_status}">${s.payment_status}</td>
         <td class="num">${s.payment_method ?? '—'}</td>
       </tr>`;
@@ -973,7 +973,9 @@ export default function SalesPage() {
                       <TableCell className="text-right text-sm">{group.items.length}</TableCell>
                       <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
                       <TableCell className="text-right text-sm font-medium">{formatCurrency(group.totalSellingAmount)}</TableCell>
-                      <TableCell className="text-right text-sm text-green-600 font-medium hidden lg:table-cell">{formatCurrency(group.totalProfit)}</TableCell>
+                      <TableCell className="text-right text-sm font-medium hidden lg:table-cell">
+                        {group.totalProfit > 0 ? <span className="text-green-600">{formatCurrency(group.totalProfit)}</span> : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                       <TableCell className="text-right text-sm hidden lg:table-cell">
                         {group.pendingAmount > 0 ? <span className="text-orange-500 font-medium">{formatCurrency(group.pendingAmount)}</span> : <span className="text-muted-foreground">—</span>}
                       </TableCell>
@@ -1045,7 +1047,9 @@ export default function SalesPage() {
                         <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.retail_price)}</TableCell>
                         <TableCell className="text-right text-sm whitespace-nowrap">{formatCurrency(s.my_price * s.quantity)}</TableCell>
                         <TableCell className="text-right text-sm font-semibold whitespace-nowrap">{formatCurrency(s.retail_price * s.quantity)}</TableCell>
-                        <TableCell className="text-right text-sm font-semibold whitespace-nowrap text-green-600">{formatCurrency((s.retail_price - s.my_price) * s.quantity)}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold whitespace-nowrap">
+                          {s.payment_status === 'done' ? <span className="text-green-600">{formatCurrency((s.retail_price - s.my_price) * s.quantity)}</span> : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
                         <TableCell className="text-center">
                           <Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge>
                         </TableCell>
