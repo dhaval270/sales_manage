@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -14,7 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Inventory, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Search, FileText, Download, RotateCcw } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, FileText, Download, RotateCcw, PackageCheck } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 
@@ -140,6 +141,7 @@ type InventoryForm = z.infer<typeof inventorySchema>;
 export default function InventoryPage() {
   const { toast } = useToast();
   const [items, setItems] = useState<Inventory[]>([]);
+  const [salesData, setSalesData] = useState<{ product_name: string; quantity: number }[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [addOpen, setAddOpen] = useState(false);
@@ -169,13 +171,15 @@ export default function InventoryPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const [{ data: invData }, { data: prodData }, { data: { user } }] = await Promise.all([
+    const [{ data: invData }, { data: prodData }, { data: salesRaw }, { data: { user } }] = await Promise.all([
       supabase.from('inventory').select('*').order('date', { ascending: false }),
       supabase.from('products').select('*').order('name'),
+      supabase.from('sales').select('product_name, quantity'),
       supabase.auth.getUser(),
     ]);
     setItems(invData ?? []);
     setProducts(prodData ?? []);
+    setSalesData(salesRaw ?? []);
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
       if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
@@ -278,6 +282,29 @@ export default function InventoryPage() {
   const totalQty = filteredItems.reduce((a, i) => a + i.quantity, 0);
   const totalCost = filteredItems.reduce((a, i) => a + i.my_price * i.quantity, 0);
   const totalVP = filteredItems.reduce((a, i) => a + (i.volume_points ?? 0) * i.quantity, 0);
+
+  // Stock remaining: total purchased per product minus total sold
+  const stockRemaining = useMemo(() => {
+    const purchasedMap = new Map<string, { qty: number; totalVP: number }>();
+    for (const i of items) {
+      if (!purchasedMap.has(i.product_name)) purchasedMap.set(i.product_name, { qty: 0, totalVP: 0 });
+      const p = purchasedMap.get(i.product_name)!;
+      p.qty += i.quantity;
+      p.totalVP += (i.volume_points ?? 0) * i.quantity;
+    }
+    const soldMap = new Map<string, number>();
+    for (const s of salesData) {
+      soldMap.set(s.product_name, (soldMap.get(s.product_name) ?? 0) + s.quantity);
+    }
+    return Array.from(purchasedMap.entries())
+      .map(([product, { qty: purchased, totalVP }]) => {
+        const sold = soldMap.get(product) ?? 0;
+        const remaining = purchased - sold;
+        const avgVP = purchased > 0 ? totalVP / purchased : 0;
+        return { product, purchased, sold, remaining, vpRemaining: remaining * avgVP };
+      })
+      .sort((a, b) => a.remaining - b.remaining);
+  }, [items, salesData]);
 
   // Period report
   const periodItems = items.filter((i) => {
@@ -507,73 +534,145 @@ export default function InventoryPage() {
         </Card>
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
-      ) : (
+      {/* Stock Remaining */}
+      {!loading && stockRemaining.length > 0 && (
         <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <PackageCheck className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <CardTitle className="text-base">Stock Remaining</CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">Total purchased minus all sales — current stock on hand</p>
+              </div>
+            </div>
+          </CardHeader>
           <CardContent className="p-0">
-            {filteredItems.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground">
-                {items.length === 0 ? 'No inventory items yet. Add your first item.' : 'No items match the selected date range.'}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead className="text-right">Qty</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
-                      <TableHead className="text-right">Total Cost</TableHead>
-                      <TableHead className="text-right hidden lg:table-cell">VP/unit</TableHead>
-                      <TableHead className="text-right hidden md:table-cell">Total VP</TableHead>
-                      <TableHead className="hidden lg:table-cell">Comments</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Product</TableHead>
+                    <TableHead className="text-right">Purchased</TableHead>
+                    <TableHead className="text-right">Sold</TableHead>
+                    <TableHead className="text-right font-semibold">Remaining</TableHead>
+                    <TableHead className="text-right hidden md:table-cell">VP Remaining</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {stockRemaining.map(({ product, purchased, sold, remaining, vpRemaining }) => (
+                    <TableRow key={product}>
+                      <TableCell className="font-medium text-sm">{product}</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">{purchased}</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">{sold}</TableCell>
+                      <TableCell className="text-right text-sm font-bold">
+                        <span className={remaining <= 0 ? 'text-destructive' : remaining <= 3 ? 'text-orange-500' : 'text-green-600'}>
+                          {remaining}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-purple-600 hidden md:table-cell">
+                        {vpRemaining > 0 ? `${vpRemaining.toFixed(2)} VP` : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {remaining <= 0
+                          ? <Badge variant="destructive">Out of stock</Badge>
+                          : remaining <= 3
+                          ? <Badge variant="warning">Low stock</Badge>
+                          : <Badge variant="success">In stock</Badge>}
+                      </TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredItems.map((item) => (
-                      <TableRow key={item.id}>
-                        <TableCell className="text-sm">{formatDate(item.date)}</TableCell>
-                        <TableCell className="text-sm font-medium max-w-[120px] truncate">{item.product_name}</TableCell>
-                        <TableCell className="text-right text-sm">{item.quantity}</TableCell>
-                        <TableCell className="text-right text-sm hidden md:table-cell">{formatCurrency(item.my_price)}</TableCell>
-                        <TableCell className="text-right text-sm font-medium">{formatCurrency(item.my_price * item.quantity)}</TableCell>
-                        <TableCell className="text-right text-sm text-muted-foreground hidden lg:table-cell">{item.volume_points ?? 0}</TableCell>
-                        <TableCell className="text-right text-sm text-purple-600 font-medium hidden md:table-cell">{((item.volume_points ?? 0) * item.quantity).toFixed(2)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate hidden lg:table-cell">{item.comments ?? '-'}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-1 justify-end">
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(item)}>
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}>
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                  <TableFooter>
-                    <TableRow>
-                      <TableCell colSpan={2} className="font-bold">Total</TableCell>
-                      <TableCell className="text-right font-bold">{totalQty}</TableCell>
-                      <TableCell className="hidden md:table-cell" />
-                      <TableCell className="text-right font-bold">{formatCurrency(totalCost)}</TableCell>
-                      <TableCell className="hidden lg:table-cell" />
-                      <TableCell className="text-right font-bold text-purple-600 hidden md:table-cell">{totalVP.toFixed(2)}</TableCell>
-                      <TableCell className="hidden lg:table-cell" colSpan={2} />
-                    </TableRow>
-                  </TableFooter>
-                </Table>
-              </div>
-            )}
+                  ))}
+                </TableBody>
+                <TableFooter>
+                  <TableRow>
+                    <TableCell className="font-bold">Total</TableCell>
+                    <TableCell className="text-right font-bold">{stockRemaining.reduce((a, r) => a + r.purchased, 0)}</TableCell>
+                    <TableCell className="text-right font-bold">{stockRemaining.reduce((a, r) => a + r.sold, 0)}</TableCell>
+                    <TableCell className="text-right font-bold text-green-600">{stockRemaining.reduce((a, r) => a + r.remaining, 0)}</TableCell>
+                    <TableCell className="text-right font-bold text-purple-600 hidden md:table-cell">
+                      {stockRemaining.reduce((a, r) => a + r.vpRemaining, 0).toFixed(2)} VP
+                    </TableCell>
+                    <TableCell />
+                  </TableRow>
+                </TableFooter>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Purchase History */}
+      <div>
+        <h2 className="text-base font-semibold mb-3 text-muted-foreground">Purchase History</h2>
+
+        {/* Table */}
+        {loading ? (
+          <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              {filteredItems.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground">
+                  {items.length === 0 ? 'No inventory items yet. Add your first item.' : 'No items match the selected date range.'}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Product</TableHead>
+                        <TableHead className="text-right">Qty</TableHead>
+                        <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
+                        <TableHead className="text-right">Total Cost</TableHead>
+                        <TableHead className="text-right hidden lg:table-cell">VP/unit</TableHead>
+                        <TableHead className="text-right hidden md:table-cell">Total VP</TableHead>
+                        <TableHead className="hidden lg:table-cell">Comments</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredItems.map((item) => (
+                        <TableRow key={item.id}>
+                          <TableCell className="text-sm">{formatDate(item.date)}</TableCell>
+                          <TableCell className="text-sm font-medium max-w-[120px] truncate">{item.product_name}</TableCell>
+                          <TableCell className="text-right text-sm">{item.quantity}</TableCell>
+                          <TableCell className="text-right text-sm hidden md:table-cell">{formatCurrency(item.my_price)}</TableCell>
+                          <TableCell className="text-right text-sm font-medium">{formatCurrency(item.my_price * item.quantity)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground hidden lg:table-cell">{item.volume_points ?? 0}</TableCell>
+                          <TableCell className="text-right text-sm text-purple-600 font-medium hidden md:table-cell">{((item.volume_points ?? 0) * item.quantity).toFixed(2)}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate hidden lg:table-cell">{item.comments ?? '-'}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-1 justify-end">
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEdit(item)}>
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell colSpan={2} className="font-bold">Total</TableCell>
+                        <TableCell className="text-right font-bold">{totalQty}</TableCell>
+                        <TableCell className="hidden md:table-cell" />
+                        <TableCell className="text-right font-bold">{formatCurrency(totalCost)}</TableCell>
+                        <TableCell className="hidden lg:table-cell" />
+                        <TableCell className="text-right font-bold text-purple-600 hidden md:table-cell">{totalVP.toFixed(2)}</TableCell>
+                        <TableCell className="hidden lg:table-cell" colSpan={2} />
+                      </TableRow>
+                    </TableFooter>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

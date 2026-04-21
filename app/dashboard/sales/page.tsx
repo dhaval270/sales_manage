@@ -134,6 +134,7 @@ function printInvoice(group: SaleGroup, managerName: string) {
         <td class="num">₹${totalMy.toFixed(2)}</td>
         <td class="num">₹${totalRetail.toFixed(2)}</td>
         <td class="num" style="${s.payment_status === 'done' ? 'color:#16a34a;font-weight:600' : 'color:#999'}">${s.payment_status === 'done' ? `₹${profit.toFixed(2)}` : '—'}</td>
+        <td class="num">${(s.volume_points ?? 0) > 0 ? `${((s.volume_points ?? 0) * s.quantity).toFixed(2)}` : '—'}</td>
         <td class="num status-${s.payment_status}">${s.payment_status}</td>
         <td class="num">${s.payment_method ?? '—'}</td>
       </tr>`;
@@ -191,6 +192,7 @@ function printInvoice(group: SaleGroup, managerName: string) {
         <th class="num">Total My</th>
         <th class="num">Total Retail</th>
         <th class="num">Profit</th>
+        <th class="num">VP</th>
         <th class="num">Status</th>
         <th class="num">Method</th>
       </tr>
@@ -200,6 +202,7 @@ function printInvoice(group: SaleGroup, managerName: string) {
   <table class="totals">
     <tr><td>Subtotal</td><td class="num">₹${group.totalSellingAmount.toFixed(2)}</td></tr>
     ${totalPending > 0 ? `<tr><td style="color:#d97706">Pending</td><td class="num" style="color:#d97706">₹${totalPending.toFixed(2)}</td></tr>` : ''}
+    ${group.totalVP > 0 ? `<tr><td style="color:#7c3aed">Total Volume Points</td><td class="num" style="color:#7c3aed">${group.totalVP.toFixed(2)} VP</td></tr>` : ''}
     <tr><td>Total</td><td class="num">₹${group.totalSellingAmount.toFixed(2)}</td></tr>
   </table>
   <div class="footer">Generated on ${new Date().toLocaleString()} · Herbalife Sales Manager</div>
@@ -953,6 +956,7 @@ export default function SalesPage() {
                     <TableHead className="hidden md:table-cell">Reference</TableHead>
                     <TableHead className="text-right">Products</TableHead>
                     <TableHead className="text-right">Total Qty</TableHead>
+                    <TableHead className="text-right hidden xl:table-cell">Volume</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
                     <TableHead className="text-right hidden lg:table-cell">Profit</TableHead>
                     <TableHead className="text-right hidden lg:table-cell">Pending</TableHead>
@@ -972,6 +976,9 @@ export default function SalesPage() {
                       <TableCell className="text-sm text-muted-foreground hidden md:table-cell">{group.reference ?? '—'}</TableCell>
                       <TableCell className="text-right text-sm">{group.items.length}</TableCell>
                       <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
+                      <TableCell className="text-right text-sm hidden xl:table-cell">
+                        {group.totalVP > 0 ? <span className="text-purple-600 font-medium">{group.totalVP.toFixed(2)} VP</span> : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
                       <TableCell className="text-right text-sm font-medium">{formatCurrency(group.totalSellingAmount)}</TableCell>
                       <TableCell className="text-right text-sm font-medium hidden lg:table-cell">
                         {group.totalProfit > 0 ? <span className="text-green-600">{formatCurrency(group.totalProfit)}</span> : <span className="text-muted-foreground">—</span>}
@@ -1033,6 +1040,7 @@ export default function SalesPage() {
                       <TableHead className="text-right whitespace-nowrap">Total My</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Total Retail</TableHead>
                       <TableHead className="text-right whitespace-nowrap">Profit</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">VP</TableHead>
                       <TableHead className="text-center whitespace-nowrap">Status</TableHead>
                       <TableHead className="text-center whitespace-nowrap">Method</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -1049,6 +1057,9 @@ export default function SalesPage() {
                         <TableCell className="text-right text-sm font-semibold whitespace-nowrap">{formatCurrency(s.retail_price * s.quantity)}</TableCell>
                         <TableCell className="text-right text-sm font-semibold whitespace-nowrap">
                           {s.payment_status === 'done' ? <span className="text-green-600">{formatCurrency((s.retail_price - s.my_price) * s.quantity)}</span> : <span className="text-muted-foreground">—</span>}
+                        </TableCell>
+                        <TableCell className="text-right text-sm whitespace-nowrap">
+                          {(s.volume_points ?? 0) > 0 ? <span className="text-purple-600">{((s.volume_points ?? 0) * s.quantity).toFixed(2)}</span> : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge>
@@ -1082,6 +1093,12 @@ export default function SalesPage() {
                   <span className="text-muted-foreground">My Cost</span>
                   <span>{formatCurrency(invoiceGroup.totalMyAmount)}</span>
                 </div>
+                {invoiceGroup.totalVP > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Total Volume Points</span>
+                    <span className="text-purple-600 font-semibold">{invoiceGroup.totalVP.toFixed(2)} VP</span>
+                  </div>
+                )}
                 {invoiceGroup.pendingAmount > 0 && (
                   <div className="flex justify-between text-orange-500">
                     <span>Pending Amount</span>
