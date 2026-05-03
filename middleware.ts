@@ -1,55 +1,32 @@
-import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request });
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: Parameters<typeof supabaseResponse.cookies.set>[2] }[]) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
-
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // Public routes that don't require authentication
   const publicRoutes = ['/', '/login', '/signup', '/auth/callback'];
-  const isPublicRoute = publicRoutes.some((route) =>
-    pathname === route || (route !== '/' && pathname.startsWith(route))
+  const isPublicRoute = publicRoutes.some(
+    (route) => pathname === route || (route !== '/' && pathname.startsWith(route))
   );
 
-  if (!session && !isPublicRoute) {
+  // Check for Supabase session cookie — no network call needed
+  const hasSession =
+    request.cookies.has('sb-dwaqexnkrtayokarnefl-auth-token') ||
+    request.cookies.has('sb-dwaqexnkrtayokarnefl-auth-token.0') ||
+    request.cookies.has('sb-dwaqexnkrtayokarnefl-auth-token.1');
+
+  if (!hasSession && !isPublicRoute) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
 
-  if (session && (pathname === '/login' || pathname === '/signup' || pathname === '/')) {
+  if (hasSession && (pathname === '/login' || pathname === '/signup' || pathname === '/')) {
     const url = request.nextUrl.clone();
     url.pathname = '/dashboard';
     return NextResponse.redirect(url);
   }
 
-  return supabaseResponse;
+  return NextResponse.next();
 }
 
 export const config = {
