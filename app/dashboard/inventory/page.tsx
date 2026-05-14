@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
 import type { Inventory, Product } from '@/types/database';
-import { Plus, Pencil, Trash2, Search, FileText, Download, RotateCcw, PackageCheck } from 'lucide-react';
+import { Plus, Pencil, Trash2, Search, FileText, Download, RotateCcw, PackageCheck, SlidersHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -154,6 +154,11 @@ export default function InventoryPage() {
   const [periodTo, setPeriodTo] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
+  const [stockAdjustments, setStockAdjustments] = useState<{ product_name: string; sold_adjustment: number; notes: string }[]>([]);
+  const [stockEditItem, setStockEditItem] = useState<{ product: string; purchased: number; trackedSold: number; adjustment: number; notes: string } | null>(null);
+  const [stockEditAdj, setStockEditAdj] = useState(0);
+  const [stockEditNotes, setStockEditNotes] = useState('');
+  const [stockDeleteProduct, setStockDeleteProduct] = useState<string | null>(null);
 
   // Filters
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -171,15 +176,17 @@ export default function InventoryPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const [{ data: invData }, { data: prodData }, { data: salesRaw }, { data: { user } }] = await Promise.all([
+    const [{ data: invData }, { data: prodData }, { data: salesRaw }, { data: adjData }, { data: { user } }] = await Promise.all([
       supabase.from('inventory').select('*').order('date', { ascending: false }),
       supabase.from('products').select('*').order('name'),
       supabase.from('sales').select('product_name, quantity'),
+      supabase.from('stock_adjustments').select('product_name, sold_adjustment, notes'),
       supabase.auth.getUser(),
     ]);
     setItems(invData ?? []);
     setProducts(prodData ?? []);
     setSalesData(salesRaw ?? []);
+    setStockAdjustments(adjData ?? []);
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
       if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
@@ -283,7 +290,7 @@ export default function InventoryPage() {
   const totalCost = filteredItems.reduce((a, i) => a + i.my_price * i.quantity, 0);
   const totalVP = filteredItems.reduce((a, i) => a + (i.volume_points ?? 0) * i.quantity, 0);
 
-  // Stock remaining: total purchased per product minus total sold
+  // Stock remaining: total purchased per product minus total sold (+ manual adjustments)
   const stockRemaining = useMemo(() => {
     const purchasedMap = new Map<string, { qty: number; totalVP: number }>();
     for (const i of items) {
@@ -296,15 +303,61 @@ export default function InventoryPage() {
     for (const s of salesData) {
       soldMap.set(s.product_name, (soldMap.get(s.product_name) ?? 0) + s.quantity);
     }
+    const adjMap = new Map<string, { adjustment: number; notes: string }>();
+    for (const a of stockAdjustments) {
+      adjMap.set(a.product_name, { adjustment: a.sold_adjustment, notes: a.notes });
+    }
     return Array.from(purchasedMap.entries())
       .map(([product, { qty: purchased, totalVP }]) => {
-        const sold = soldMap.get(product) ?? 0;
+        const trackedSold = soldMap.get(product) ?? 0;
+        const adj = adjMap.get(product);
+        const sold = trackedSold + (adj?.adjustment ?? 0);
         const remaining = purchased - sold;
         const avgVP = purchased > 0 ? totalVP / purchased : 0;
-        return { product, purchased, sold, remaining, vpRemaining: remaining * avgVP };
+        return { product, purchased, trackedSold, sold, remaining, vpRemaining: remaining * avgVP, adjustment: adj?.adjustment ?? 0, notes: adj?.notes ?? '' };
       })
       .sort((a, b) => a.remaining - b.remaining);
-  }, [items, salesData]);
+  }, [items, salesData, stockAdjustments]);
+
+  const handleStockEdit = (row: typeof stockRemaining[0]) => {
+    setStockEditItem({ product: row.product, purchased: row.purchased, trackedSold: row.trackedSold, adjustment: row.adjustment, notes: row.notes });
+    setStockEditAdj(row.adjustment);
+    setStockEditNotes(row.notes);
+  };
+
+  const handleStockEditSave = async () => {
+    if (!stockEditItem) return;
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from('stock_adjustments').upsert(
+      { user_id: user.id, product_name: stockEditItem.product, sold_adjustment: stockEditAdj, notes: stockEditNotes, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id,product_name' }
+    );
+    if (error) { toast({ title: 'Save failed', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'Stock adjustment saved' });
+    setStockEditItem(null);
+    fetchData();
+  };
+
+  const handleStockDelete = async (product: string) => {
+    setStockDeleteProduct(product);
+  };
+
+  const confirmStockDelete = async () => {
+    if (!stockDeleteProduct) return;
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([
+      supabase.from('inventory').delete().eq('user_id', user.id).eq('product_name', stockDeleteProduct),
+      supabase.from('stock_adjustments').delete().eq('user_id', user.id).eq('product_name', stockDeleteProduct),
+    ]);
+    if (e1 || e2) { toast({ title: 'Delete failed', description: e1?.message ?? e2?.message, variant: 'destructive' }); return; }
+    toast({ title: `"${stockDeleteProduct}" removed from inventory` });
+    setStockDeleteProduct(null);
+    fetchData();
+  };
 
   // Period report
   const periodItems = items.filter((i) => {
@@ -534,6 +587,75 @@ export default function InventoryPage() {
         </Card>
       </div>
 
+      {/* Stock Edit Dialog */}
+      <Dialog open={!!stockEditItem} onOpenChange={(v) => { if (!v) setStockEditItem(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><SlidersHorizontal className="h-4 w-4" />Adjust Stock</DialogTitle>
+          </DialogHeader>
+          {stockEditItem && (
+            <div className="space-y-4">
+              <p className="text-sm font-medium truncate">{stockEditItem.product}</p>
+              <div className="grid grid-cols-3 gap-3 text-center text-xs">
+                <div className="bg-muted rounded p-2">
+                  <p className="text-muted-foreground mb-1">Purchased</p>
+                  <p className="font-bold text-base">{stockEditItem.purchased}</p>
+                </div>
+                <div className="bg-muted rounded p-2">
+                  <p className="text-muted-foreground mb-1">Tracked Sold</p>
+                  <p className="font-bold text-base">{stockEditItem.trackedSold}</p>
+                </div>
+                <div className="bg-muted rounded p-2">
+                  <p className="text-muted-foreground mb-1">Remaining</p>
+                  <p className={`font-bold text-base ${stockEditItem.purchased - stockEditItem.trackedSold - stockEditAdj <= 0 ? 'text-destructive' : 'text-green-600'}`}>
+                    {stockEditItem.purchased - stockEditItem.trackedSold - stockEditAdj}
+                  </p>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">Manual Sold Adjustment</Label>
+                <p className="text-xs text-muted-foreground">Add units sold outside the system (use negative to revert).</p>
+                <Input
+                  type="number"
+                  value={stockEditAdj}
+                  onChange={(e) => setStockEditAdj(Number(e.target.value))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-sm">Notes (optional)</Label>
+                <Input
+                  placeholder="Reason for adjustment..."
+                  value={stockEditNotes}
+                  onChange={(e) => setStockEditNotes(e.target.value)}
+                />
+              </div>
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => setStockEditItem(null)}>Cancel</Button>
+                <Button onClick={handleStockEditSave}>Save</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Stock Delete Confirm Dialog */}
+      <Dialog open={!!stockDeleteProduct} onOpenChange={(v) => { if (!v) setStockDeleteProduct(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Delete Product Stock</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This will permanently delete <strong>all inventory records</strong> for <strong>"{stockDeleteProduct}"</strong>. This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setStockDeleteProduct(null)}>Cancel</Button>
+              <Button variant="destructive" className="flex-1" onClick={confirmStockDelete}>Delete</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Stock Remaining */}
       {!loading && stockRemaining.length > 0 && (
         <Card>
@@ -557,14 +679,20 @@ export default function InventoryPage() {
                     <TableHead className="text-right font-semibold">Remaining</TableHead>
                     <TableHead className="text-right hidden md:table-cell">VP Remaining</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {stockRemaining.map(({ product, purchased, sold, remaining, vpRemaining }) => (
+                  {stockRemaining.map(({ product, purchased, sold, remaining, vpRemaining, adjustment }) => (
                     <TableRow key={product}>
                       <TableCell className="font-medium text-sm">{product}</TableCell>
                       <TableCell className="text-right text-sm text-muted-foreground">{purchased}</TableCell>
-                      <TableCell className="text-right text-sm text-muted-foreground">{sold}</TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground">
+                        {sold}
+                        {adjustment !== 0 && (
+                          <span className="ml-1 text-xs text-orange-500">({adjustment > 0 ? `+${adjustment}` : adjustment} adj)</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right text-sm font-bold">
                         <span className={remaining <= 0 ? 'text-destructive' : remaining <= 3 ? 'text-orange-500' : 'text-green-600'}>
                           {remaining}
@@ -580,6 +708,16 @@ export default function InventoryPage() {
                           ? <Badge variant="warning">Low stock</Badge>
                           : <Badge variant="success">In stock</Badge>}
                       </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1 justify-end">
+                          <Button size="icon" variant="ghost" className="h-8 w-8" title="Adjust stock" onClick={() => handleStockEdit({ product, purchased, trackedSold: sold - adjustment, sold, remaining, vpRemaining, adjustment, notes: stockRemaining.find(r => r.product === product)?.notes ?? '' })}>
+                            <SlidersHorizontal className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" title="Delete product" onClick={() => handleStockDelete(product)}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -592,6 +730,7 @@ export default function InventoryPage() {
                     <TableCell className="text-right font-bold text-purple-600 hidden md:table-cell">
                       {stockRemaining.reduce((a, r) => a + r.vpRemaining, 0).toFixed(2)} VP
                     </TableCell>
+                    <TableCell />
                     <TableCell />
                   </TableRow>
                 </TableFooter>

@@ -126,6 +126,18 @@ export default function CenterPage() {
     return acc;
   }, {});
 
+  // Membership stats for 4-column header
+  const membershipTodayRevenue = memberships
+    .filter(m => m.start_date === today && m.payment_status === 'paid')
+    .reduce((a, m) => a + m.price, 0);
+  const membershipMonthlyRevenue = memberships
+    .filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid')
+    .reduce((a, m) => a + m.price, 0);
+  const membershipShakesToday = membershipVisits.filter(v => v.visit_date === today).length;
+  const membershipShakesMonth = membershipVisits.filter(v => v.visit_date >= monthStart && v.visit_date <= monthEnd).length;
+  const membershipTodayEntries = memberships.filter(m => m.start_date === today && m.payment_status === 'paid').length;
+  const membershipMonthEntries = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').length;
+
   // Sale CRUD
   const onSaleSubmit = async (data: SaleForm) => {
     const supabase = createClient();
@@ -690,19 +702,35 @@ export default function CenterPage() {
       {/* ─── MEMBERSHIPS TAB ─── */}
       {activeTab === 'memberships' && (
         <>
-          {/* Stats */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Stats — 4-column */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Memberships</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{memberships.length}</p><p className="text-xs text-muted-foreground">{activeMembershipsCount} active</p></CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p>
+                <p className="text-xs text-muted-foreground">{membershipTodayEntries} paid membership{membershipTodayEntries !== 1 ? 's' : ''} today</p>
+              </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Payment</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{formatCurrency(pendingAmount)}</p><p className="text-xs text-muted-foreground">{memberships.filter(m => m.payment_status === 'pending').length} members unpaid</p></CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p>
+                <p className="text-xs text-muted-foreground">{membershipMonthEntries} paid this month · {memberships.filter(m => m.payment_status === 'pending').length} pending (₹{pendingAmount.toFixed(0)})</p>
+              </CardContent>
             </Card>
             <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Visits Today</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{membershipVisits.filter(v => v.visit_date === today).length}</p><p className="text-xs text-muted-foreground">membership shakes served</p></CardContent>
+              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-xl font-bold">{membershipShakesToday}</p>
+                <p className="text-xs text-muted-foreground">total shakes served</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-xl font-bold">{membershipShakesMonth}</p>
+                <p className="text-xs text-muted-foreground">total shakes served · {activeMembershipsCount} active</p>
+              </CardContent>
             </Card>
           </div>
 
