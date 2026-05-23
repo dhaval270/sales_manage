@@ -28,6 +28,7 @@ export default function ProductsPage() {
   const [editPrice, setEditPrice] = useState('');
   const [editVP, setEditVP] = useState('');
   const [editCategory, setEditCategory] = useState('');
+  const [editImageUrl, setEditImageUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -72,6 +73,7 @@ export default function ProductsPage() {
     setEditPrice(product.retail_price.toString());
     setEditVP(product.volume_points.toString());
     setEditCategory(product.category ?? '');
+    setEditImageUrl(product.image_url ?? '');
   };
 
   const handleSaveEdit = async () => {
@@ -84,6 +86,7 @@ export default function ProductsPage() {
         retail_price: parseFloat(editPrice) || editProduct.retail_price,
         volume_points: parseFloat(editVP) || 0,
         category: editCategory || null,
+        image_url: editImageUrl.trim() || null,
       })
       .eq('id', editProduct.id)
       .eq('user_id', userId);
@@ -385,6 +388,15 @@ export default function ProductsPage() {
                 <datalist id="cat-suggestions">
                   {categories.map((c) => <option key={c} value={c} />)}
                 </datalist>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input
+                  value={editImageUrl}
+                  onChange={(e) => setEditImageUrl(e.target.value)}
+                  placeholder="https://..."
+                />
               </div>
 
               <div className="flex gap-2 justify-between">
