@@ -34,6 +34,7 @@ const saleSchema = z.object({
   date: z.string().min(1, 'Date is required'),
   customer_name: z.string().min(1, 'Customer name is required'),
   reference: z.string().optional(),
+  payment_method: z.enum(['online', 'cash', 'pending']),
   items: z.array(lineItemSchema).min(1),
 });
 
@@ -217,6 +218,140 @@ function printInvoice(group: SaleGroup, managerName: string) {
   }
 }
 
+// ─── Customer Invoice print ──────────────────────────────────────────────────
+
+function printCustomerInvoice(customerSales: Sale[], customerName: string, managerName: string) {
+  const totalRevenue = customerSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const totalMyCost = customerSales.reduce((a, s) => a + s.my_price * s.quantity, 0);
+  const totalProfit = customerSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalPending = customerSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const totalVP = customerSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+  const cashAmount = customerSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const onlineAmount = customerSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+
+  // Group by date for organised display
+  const byDate = new Map<string, Sale[]>();
+  for (const s of customerSales) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date)!.push(s);
+  }
+
+  const rows = Array.from(byDate.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, items]) => items.map((s) => {
+      const totalMy = s.my_price * s.quantity;
+      const totalRetail = s.retail_price * s.quantity;
+      const profit = totalRetail - totalMy;
+      return `
+      <tr>
+        <td>${date}</td>
+        <td>${s.product_name}</td>
+        <td class="num">${s.quantity}</td>
+        <td class="num">₹${s.retail_price.toFixed(2)}</td>
+        <td class="num">₹${totalRetail.toFixed(2)}</td>
+        <td class="num" style="${s.payment_status === 'done' ? 'color:#16a34a;font-weight:600' : 'color:#999'}">${s.payment_status === 'done' ? `₹${profit.toFixed(2)}` : '—'}</td>
+        <td class="num status-${s.payment_status}">${s.payment_status}</td>
+        <td class="num">${s.payment_method ?? '—'}</td>
+      </tr>`;
+    }).join('')).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Customer Report – ${customerName}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    h2 { font-size: 15px; margin: 24px 0 10px; color: #333; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+    .meta div { line-height: 1.8; }
+    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+    .card .label { font-size: 11px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 18px; font-weight: 700; }
+    .card.revenue .value { color: #1d4ed8; }
+    .card.profit .value { color: #16a34a; }
+    .card.cash .value { color: #059669; }
+    .card.online .value { color: #2563eb; }
+    .card.vp .value { color: #7c3aed; }
+    .card.pending .value { color: #d97706; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 12px; border-bottom: 2px solid #ddd; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; }
+    .status-done { color: #16a34a; font-weight: 600; }
+    .status-pending { color: #d97706; font-weight: 600; }
+    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Customer Sales Report</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>Customer:</strong> ${customerName}<br/>
+      <strong>Total Transactions:</strong> ${customerSales.length} items
+    </div>
+    <div style="text-align:right">
+      <strong>Manager:</strong> ${managerName}<br/>
+      <strong>Generated:</strong> ${new Date().toLocaleString()}
+    </div>
+  </div>
+
+  <div class="summary-grid">
+    <div class="card revenue"><div class="label">Total Revenue</div><div class="value">₹${totalRevenue.toFixed(2)}</div></div>
+    <div class="card profit"><div class="label">Total Profit</div><div class="value">₹${totalProfit.toFixed(2)}</div></div>
+    <div class="card cash"><div class="label">Cash Received</div><div class="value">₹${cashAmount.toFixed(2)}</div></div>
+    <div class="card online"><div class="label">Online Received</div><div class="value">₹${onlineAmount.toFixed(2)}</div></div>
+    ${totalVP > 0 ? `<div class="card vp"><div class="label">Volume Points</div><div class="value">${totalVP.toFixed(2)} VP</div></div>` : ''}
+    ${totalPending > 0 ? `<div class="card pending"><div class="label">Pending</div><div class="value">₹${totalPending.toFixed(2)}</div></div>` : ''}
+  </div>
+
+  <h2>All Transactions</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Product</th>
+        <th class="num">Qty</th>
+        <th class="num">Unit Price</th>
+        <th class="num">Total</th>
+        <th class="num">Profit</th>
+        <th class="num">Status</th>
+        <th class="num">Method</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+    <tfoot>
+      <tr style="font-weight:bold;background:#f9fafb">
+        <td colspan="4">TOTAL</td>
+        <td class="num">₹${totalRevenue.toFixed(2)}</td>
+        <td class="num" style="color:#16a34a">₹${totalProfit.toFixed(2)}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;font-size:12px;color:#555">
+    <strong>Summary:</strong> My Cost: ₹${totalMyCost.toFixed(2)} · Cash: ₹${cashAmount.toFixed(2)} · Online: ₹${onlineAmount.toFixed(2)}${totalPending > 0 ? ` · Pending: ₹${totalPending.toFixed(2)}` : ''}
+  </div>
+
+  <div class="footer">Herbalife Sales Manager · Customer Report · ${customerName}</div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (win) {
+    win.document.write(html);
+    win.document.close();
+  }
+}
+
 // ─── Period Report print ─────────────────────────────────────────────────────
 
 function printPeriodReport(
@@ -228,17 +363,21 @@ function printPeriodReport(
   const revenue = periodSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const myCost = periodSales.reduce((a, s) => a + s.my_price * s.quantity, 0);
   const profit = periodSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const cashAmount = periodSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const onlineAmount = periodSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const pendingAmount = periodSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const volumePoints = periodSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
   const totalQty = periodSales.reduce((a, s) => a + s.quantity, 0);
 
   // Group by customer for breakdown
-  const byCustomer = new Map<string, { revenue: number; profit: number; pending: number; vp: number }>();
+  const byCustomer = new Map<string, { revenue: number; profit: number; cash: number; online: number; pending: number; vp: number }>();
   for (const s of periodSales) {
-    if (!byCustomer.has(s.customer_name)) byCustomer.set(s.customer_name, { revenue: 0, profit: 0, pending: 0, vp: 0 });
+    if (!byCustomer.has(s.customer_name)) byCustomer.set(s.customer_name, { revenue: 0, profit: 0, cash: 0, online: 0, pending: 0, vp: 0 });
     const c = byCustomer.get(s.customer_name)!;
     c.revenue += s.retail_price * s.quantity;
     if (s.payment_status === 'done') c.profit += s.profit * s.quantity;
+    if (s.payment_method === 'cash') c.cash += s.retail_price * s.quantity;
+    if (s.payment_method === 'online') c.online += s.retail_price * s.quantity;
     if (s.payment_status === 'pending') c.pending += s.retail_price * s.quantity;
     c.vp += (s.volume_points ?? 0) * s.quantity;
   }
@@ -250,6 +389,8 @@ function printPeriodReport(
         <td>${name}</td>
         <td class="num">₹${d.revenue.toFixed(2)}</td>
         <td class="num" style="color:#16a34a">₹${d.profit.toFixed(2)}</td>
+        <td class="num" style="color:#059669">${d.cash > 0 ? `₹${d.cash.toFixed(2)}` : '—'}</td>
+        <td class="num" style="color:#2563eb">${d.online > 0 ? `₹${d.online.toFixed(2)}` : '—'}</td>
         <td class="num">${d.vp.toFixed(2)}</td>
         <td class="num" style="color:${d.pending > 0 ? '#d97706' : '#16a34a'}">${d.pending > 0 ? `₹${d.pending.toFixed(2)}` : '—'}</td>
       </tr>`)
@@ -267,12 +408,14 @@ function printPeriodReport(
     h2 { font-size: 15px; margin: 24px 0 10px; color: #333; }
     .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
     .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
-    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; }
-    .card .label { font-size: 11px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card .value { font-size: 20px; font-weight: 700; }
+    .summary-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 28px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
+    .card .label { font-size: 10px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 16px; font-weight: 700; }
     .card.revenue .value { color: #1d4ed8; }
     .card.profit .value { color: #16a34a; }
+    .card.cash .value { color: #059669; }
+    .card.online .value { color: #2563eb; }
     .card.vp .value { color: #7c3aed; }
     .card.pending .value { color: #d97706; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
@@ -300,6 +443,8 @@ function printPeriodReport(
   <div class="summary-grid">
     <div class="card revenue"><div class="label">Total Revenue</div><div class="value">₹${revenue.toFixed(2)}</div></div>
     <div class="card profit"><div class="label">Total Profit</div><div class="value">₹${profit.toFixed(2)}</div></div>
+    <div class="card cash"><div class="label">Cash Received</div><div class="value">₹${cashAmount.toFixed(2)}</div></div>
+    <div class="card online"><div class="label">Online Received</div><div class="value">₹${onlineAmount.toFixed(2)}</div></div>
     <div class="card vp"><div class="label">Volume Points</div><div class="value">${volumePoints.toFixed(2)}</div></div>
     <div class="card pending"><div class="label">Pending Amount</div><div class="value">₹${pendingAmount.toFixed(2)}</div></div>
   </div>
@@ -311,6 +456,8 @@ function printPeriodReport(
         <th>Customer</th>
         <th class="num">Revenue</th>
         <th class="num">Profit</th>
+        <th class="num">Cash</th>
+        <th class="num">Online</th>
         <th class="num">Volume Points</th>
         <th class="num">Pending</th>
       </tr>
@@ -321,6 +468,8 @@ function printPeriodReport(
         <td>TOTAL</td>
         <td class="num">₹${revenue.toFixed(2)}</td>
         <td class="num" style="color:#16a34a">₹${profit.toFixed(2)}</td>
+        <td class="num" style="color:#059669">₹${cashAmount.toFixed(2)}</td>
+        <td class="num" style="color:#2563eb">₹${onlineAmount.toFixed(2)}</td>
         <td class="num">${volumePoints.toFixed(2)}</td>
         <td class="num" style="color:#d97706">${pendingAmount > 0 ? `₹${pendingAmount.toFixed(2)}` : '—'}</td>
       </tr>
@@ -383,7 +532,7 @@ export default function SalesPage() {
   // Add form
   const { register, handleSubmit, reset, setValue, watch, control, formState: { errors } } = useForm<SaleForm>({
     resolver: zodResolver(saleSchema),
-    defaultValues: { date: format(new Date(), 'yyyy-MM-dd'), customer_name: '', reference: '', items: [emptyItem] },
+    defaultValues: { date: format(new Date(), 'yyyy-MM-dd'), customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] },
   });
   const { fields, append, remove } = useFieldArray({ control, name: 'items' });
   const watchItems = watch('items');
@@ -451,7 +600,7 @@ export default function SalesPage() {
   };
 
   const resetAddForm = () => {
-    reset({ date: format(new Date(), 'yyyy-MM-dd'), customer_name: '', reference: '', items: [emptyItem] });
+    reset({ date: format(new Date(), 'yyyy-MM-dd'), customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] });
     setProductSearches(['']);
     setOpenDropdownIndex(null);
   };
@@ -461,6 +610,7 @@ export default function SalesPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
+    const isPending = data.payment_method === 'pending';
     const rows = data.items.map((item) => ({
       user_id: user.id,
       date: data.date,
@@ -472,6 +622,8 @@ export default function SalesPage() {
       retail_price: item.retail_price,
       volume_points: item.volume_points || 0,
       comments: item.comments || null,
+      payment_status: isPending ? 'pending' : 'done',
+      payment_method: isPending ? null : data.payment_method,
     }));
 
     const { error } = await supabase.from('sales').insert(rows);
@@ -596,6 +748,8 @@ export default function SalesPage() {
   // Summary totals
   const totalRevenue = filteredSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalProfit = filteredSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalCashAmount = filteredSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalOnlineAmount = filteredSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.profit * s.quantity, 0);
   const totalPendingAmount = filteredSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalVolumePoints = filteredSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
 
@@ -723,6 +877,11 @@ export default function SalesPage() {
                 </div>
                 {invoiceCustomer && customerInvoiceSales.length > 0 && (
                   <div className="space-y-3">
+                    <div className="flex justify-end">
+                      <Button size="sm" variant="outline" className="gap-2" onClick={() => printCustomerInvoice(customerInvoiceSales, invoiceCustomer, managerName)}>
+                        <Download className="h-4 w-4" />Download PDF
+                      </Button>
+                    </div>
                     <div className="border rounded-lg overflow-hidden">
                       <Table>
                         <TableHeader>
@@ -905,6 +1064,31 @@ export default function SalesPage() {
                   </div>
                 )}
 
+                {/* Payment method */}
+                <div className="space-y-2">
+                  <Label>Payment</Label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(['cash', 'online', 'pending'] as const).map((method) => {
+                      const selected = watch('payment_method') === method;
+                      const colors: Record<string, string> = {
+                        cash: selected ? 'bg-green-600 text-white border-green-600 hover:bg-green-700' : 'border-green-200 text-green-700 hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30',
+                        online: selected ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700' : 'border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/30',
+                        pending: selected ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600' : 'border-orange-200 text-orange-600 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-400 dark:hover:bg-orange-950/30',
+                      };
+                      return (
+                        <button
+                          key={method}
+                          type="button"
+                          className={`rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors ${colors[method]}`}
+                          onClick={() => setValue('payment_method', method)}
+                        >
+                          {method === 'online' ? 'Online' : method === 'cash' ? 'Cash' : 'Pending'}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="flex gap-2 justify-end">
                   <Button type="button" variant="outline" onClick={() => { setAddOpen(false); resetAddForm(); }}>Cancel</Button>
                   <Button type="submit">Add Sale{fields.length > 1 ? `s (${fields.length})` : ''}</Button>
@@ -932,9 +1116,11 @@ export default function SalesPage() {
       </Card>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-600">{formatCurrency(totalProfit)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Amount</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-orange-500">{formatCurrency(totalPendingAmount)}</p></CardContent></Card>
       </div>

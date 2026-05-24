@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { createClient } from '@/lib/supabase/client';
@@ -14,20 +14,27 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import type { CenterMenu, CenterSale, CenterMembership, CenterMembershipVisit } from '@/types/database';
-import { Plus, Pencil, Trash2, Settings, Download, CheckCircle2, Circle, Users, Search, RotateCcw } from 'lucide-react';
+import type { CenterMenu, CenterSale, CenterMembership, CenterMembershipVisit, Product } from '@/types/database';
+import { Plus, Pencil, Trash2, Settings, Download, CheckCircle2, Circle, Users, Search, RotateCcw, Receipt, FileText, X, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
+
+// ─── Schemas ─────────────────────────────────────────────────────────────────
+
+const lineItemSchema = z.object({
+  product_name: z.string().min(1, 'Product required'),
+  quantity: z.coerce.number().min(1, 'Min 1'),
+  fixed_price: z.coerce.number().min(0),
+  volume_points: z.coerce.number().optional(),
+  comments: z.string().optional(),
+});
 
 const saleSchema = z.object({
   date: z.string().min(1, 'Date is required'),
   customer_name: z.string().min(1, 'Customer name is required'),
   reference: z.string().optional(),
-  product_name: z.string().min(1, 'Product is required'),
-  quantity: z.coerce.number().min(1),
-  fixed_price: z.coerce.number().min(0),
-  volume_points: z.coerce.number().optional(),
-  comments: z.string().optional(),
+  payment_method: z.enum(['online', 'cash', 'pending']),
+  items: z.array(lineItemSchema).min(1),
 });
 
 const menuSchema = z.object({
@@ -48,6 +55,144 @@ type SaleForm = z.infer<typeof saleSchema>;
 type MenuForm = z.infer<typeof menuSchema>;
 type MembershipForm = z.infer<typeof membershipSchema>;
 
+const emptyItem = { product_name: '', quantity: 1, fixed_price: 0, volume_points: 0, comments: '' };
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type CenterSaleGroup = {
+  key: string;
+  date: string;
+  customer_name: string;
+  reference: string | null;
+  items: CenterSale[];
+  totalQty: number;
+  totalAmount: number;
+  totalVP: number;
+  pendingAmount: number;
+  status: 'done' | 'pending' | 'mixed';
+  allIds: number[];
+};
+
+function groupCenterSales(sales: CenterSale[]): CenterSaleGroup[] {
+  const map = new Map<string, CenterSaleGroup>();
+  for (const s of sales) {
+    const key = `${s.date}|${s.customer_name}|${s.reference ?? ''}`;
+    if (!map.has(key)) {
+      map.set(key, { key, date: s.date, customer_name: s.customer_name, reference: s.reference, items: [], totalQty: 0, totalAmount: 0, totalVP: 0, pendingAmount: 0, status: 'done', allIds: [] });
+    }
+    const g = map.get(key)!;
+    g.items.push(s);
+    g.allIds.push(s.id);
+    g.totalQty += s.quantity;
+    g.totalAmount += s.fixed_price * s.quantity;
+    g.totalVP += (s.volume_points ?? 0) * s.quantity;
+    if (s.payment_status === 'pending') g.pendingAmount += s.fixed_price * s.quantity;
+  }
+  Array.from(map.values()).forEach((g) => {
+    const hasDone = g.items.some((s) => s.payment_status === 'done');
+    const hasPending = g.items.some((s) => s.payment_status === 'pending');
+    g.status = hasDone && hasPending ? 'mixed' : hasPending ? 'pending' : 'done';
+  });
+  return Array.from(map.values());
+}
+
+// ─── Print helpers ────────────────────────────────────────────────────────────
+
+function printCenterCustomerInvoice(customerSales: CenterSale[], customerName: string, managerName: string) {
+  const totalRevenue = customerSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalPending = customerSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const cashAmount = customerSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const onlineAmount = customerSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalVP = customerSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+
+  const byDate = new Map<string, CenterSale[]>();
+  for (const s of customerSales) {
+    if (!byDate.has(s.date)) byDate.set(s.date, []);
+    byDate.get(s.date)!.push(s);
+  }
+
+  const rows = Array.from(byDate.entries())
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([date, items]) => items.map((s) => `
+      <tr>
+        <td>${date}</td><td>${s.product_name}</td>
+        <td class="num">${s.quantity}</td>
+        <td class="num">₹${s.fixed_price.toFixed(2)}</td>
+        <td class="num">₹${(s.fixed_price * s.quantity).toFixed(2)}</td>
+        <td class="num status-${s.payment_status}">${s.payment_status}</td>
+        <td class="num">${s.payment_method ?? '—'}</td>
+      </tr>`).join('')).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/>
+  <title>Customer Report – ${customerName}</title>
+  <style>* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px} h1{font-size:22px;margin-bottom:4px} .sub{color:#666;font-size:12px;margin-bottom:24px} .meta{display:flex;justify-content:space-between;margin-bottom:24px} .meta div{line-height:1.8} .summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px} .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px} .card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em} .card .value{font-size:18px;font-weight:700} table{width:100%;border-collapse:collapse;margin-bottom:20px} th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:12px;border-bottom:2px solid #ddd} td{padding:8px 10px;border-bottom:1px solid #eee} .num{text-align:right} tfoot tr td{font-weight:bold;background:#f9fafb} .status-done{color:#16a34a;font-weight:600} .status-pending{color:#d97706;font-weight:600} .footer{margin-top:40px;font-size:11px;color:#999;text-align:center} @media print{button{display:none}}</style>
+  </head><body>
+  <h1>Customer Sales Report</h1><p class="sub">Herbalife Sales Manager – Center</p>
+  <div class="meta"><div><strong>Customer:</strong> ${customerName}<br/><strong>Total Transactions:</strong> ${customerSales.length} entries</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
+  <div class="summary-grid">
+    <div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#1d4ed8">₹${totalRevenue.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Cash Received</div><div class="value" style="color:#059669">₹${cashAmount.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Online Received</div><div class="value" style="color:#2563eb">₹${onlineAmount.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Pending</div><div class="value" style="color:#d97706">₹${totalPending.toFixed(2)}</div></div>
+    ${totalVP > 0 ? `<div class="card"><div class="label">Volume Points</div><div class="value" style="color:#7c3aed">${totalVP.toFixed(2)} VP</div></div>` : ''}
+  </div>
+  <table><thead><tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Total</th><th class="num">Status</th><th class="num">Method</th></tr></thead>
+  <tbody>${rows}</tbody>
+  <tfoot><tr><td colspan="4">TOTAL</td><td class="num">₹${totalRevenue.toFixed(2)}</td><td colspan="2"></td></tr></tfoot></table>
+  <div class="footer">Herbalife Sales Manager · Center · Customer Report · ${customerName}</div>
+  <script>window.onload=()=>{window.print()}<\/script></body></html>`;
+
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+}
+
+function printCenterPeriodReport(periodSales: CenterSale[], from: string, to: string, managerName: string) {
+  const revenue = periodSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const cashAmount = periodSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const onlineAmount = periodSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const pendingAmount = periodSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const volumePoints = periodSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+  const totalQty = periodSales.reduce((a, s) => a + s.quantity, 0);
+
+  const byCustomer = new Map<string, { revenue: number; cash: number; online: number; pending: number; vp: number }>();
+  for (const s of periodSales) {
+    if (!byCustomer.has(s.customer_name)) byCustomer.set(s.customer_name, { revenue: 0, cash: 0, online: 0, pending: 0, vp: 0 });
+    const c = byCustomer.get(s.customer_name)!;
+    c.revenue += s.fixed_price * s.quantity;
+    if (s.payment_method === 'cash') c.cash += s.fixed_price * s.quantity;
+    if (s.payment_method === 'online') c.online += s.fixed_price * s.quantity;
+    if (s.payment_status === 'pending') c.pending += s.fixed_price * s.quantity;
+    c.vp += (s.volume_points ?? 0) * s.quantity;
+  }
+
+  const customerRows = Array.from(byCustomer.entries()).sort((a, b) => b[1].revenue - a[1].revenue).map(([name, d]) => `
+    <tr><td>${name}</td><td class="num">₹${d.revenue.toFixed(2)}</td><td class="num" style="color:#059669">${d.cash > 0 ? `₹${d.cash.toFixed(2)}` : '—'}</td><td class="num" style="color:#2563eb">${d.online > 0 ? `₹${d.online.toFixed(2)}` : '—'}</td><td class="num">${d.vp.toFixed(2)}</td><td class="num" style="color:${d.pending > 0 ? '#d97706' : '#16a34a'}">${d.pending > 0 ? `₹${d.pending.toFixed(2)}` : '—'}</td></tr>`).join('');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Center Period Report ${from} to ${to}</title>
+  <style>* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px} h1{font-size:22px;margin-bottom:4px} h2{font-size:15px;margin:24px 0 10px;color:#333} .sub{color:#666;font-size:12px;margin-bottom:24px} .meta{display:flex;justify-content:space-between;margin-bottom:24px} .summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:28px} .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px} .card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em} .card .value{font-size:16px;font-weight:700} table{width:100%;border-collapse:collapse;margin-bottom:20px} th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:12px;border-bottom:2px solid #ddd} td{padding:8px 10px;border-bottom:1px solid #eee} .num{text-align:right} tfoot tr td{font-weight:bold;background:#f9fafb} .footer{margin-top:40px;font-size:11px;color:#999;text-align:center} @media print{button{display:none}}</style>
+  </head><body>
+  <h1>Center Period Sales Report</h1><p class="sub">Herbalife Sales Manager</p>
+  <div class="meta"><div><strong>Period:</strong> ${from} to ${to}<br/><strong>Total Transactions:</strong> ${periodSales.length} items (${totalQty} units)</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
+  <div class="summary-grid">
+    <div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#1d4ed8">₹${revenue.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Cash Received</div><div class="value" style="color:#059669">₹${cashAmount.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Online Received</div><div class="value" style="color:#2563eb">₹${onlineAmount.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Volume Points</div><div class="value" style="color:#7c3aed">${volumePoints.toFixed(2)}</div></div>
+    <div class="card"><div class="label">Pending Amount</div><div class="value" style="color:#d97706">₹${pendingAmount.toFixed(2)}</div></div>
+  </div>
+  <h2>Customer Breakdown</h2>
+  <table><thead><tr><th>Customer</th><th class="num">Revenue</th><th class="num">Cash</th><th class="num">Online</th><th class="num">Volume Points</th><th class="num">Pending</th></tr></thead>
+  <tbody>${customerRows}</tbody>
+  <tfoot><tr><td>TOTAL</td><td class="num">₹${revenue.toFixed(2)}</td><td class="num" style="color:#059669">₹${cashAmount.toFixed(2)}</td><td class="num" style="color:#2563eb">₹${onlineAmount.toFixed(2)}</td><td class="num">${volumePoints.toFixed(2)}</td><td class="num" style="color:#d97706">${pendingAmount > 0 ? `₹${pendingAmount.toFixed(2)}` : '—'}</td></tr></tfoot></table>
+  <div class="footer">Herbalife Sales Manager · Center · Period Report · ${from} to ${to}</div>
+  <script>window.onload=()=>{window.print()}<\/script></body></html>`;
+
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function CenterPage() {
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'sales' | 'memberships'>('sales');
@@ -55,35 +200,78 @@ export default function CenterPage() {
   // Sales state
   const [sales, setSales] = useState<CenterSale[]>([]);
   const [menu, setMenu] = useState<CenterMenu[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [addSaleOpen, setAddSaleOpen] = useState(false);
-  const [editSale, setEditSale] = useState<CenterSale | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [editMenuItem, setEditMenuItem] = useState<CenterMenu | null>(null);
+
+  // Invoice group
+  const [invoiceGroup, setInvoiceGroup] = useState<CenterSaleGroup | null>(null);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+
+  // Edit single item
+  const [editSale, setEditSale] = useState<CenterSale | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+
+  // Per-line product search
+  const [productSearches, setProductSearches] = useState<string[]>(['']);
+  const [openDropdownIndex, setOpenDropdownIndex] = useState<number | null>(null);
 
   // Membership state
   const [memberships, setMemberships] = useState<CenterMembership[]>([]);
   const [membershipVisits, setMembershipVisits] = useState<CenterMembershipVisit[]>([]);
   const [addMembershipOpen, setAddMembershipOpen] = useState(false);
   const [membershipReportOpen, setMembershipReportOpen] = useState(false);
-  // Per-membership selected visit date (defaults to today)
   const [visitDateMap, setVisitDateMap] = useState<Record<number, string>>({});
   const [membershipSearch, setMembershipSearch] = useState('');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
-  // Per-membership comment editing state
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [managerName, setManagerName] = useState('Manager');
+
+  // Filters
+  const [filterCustomer, setFilterCustomer] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+
+  // Period report
+  const [periodReportOpen, setPeriodReportOpen] = useState(false);
+  const [periodFrom, setPeriodFrom] = useState('');
+  const [periodTo, setPeriodTo] = useState('');
+
+  // Customer invoice
+  const [customerInvoiceOpen, setCustomerInvoiceOpen] = useState(false);
+  const [invoiceCustomer, setInvoiceCustomer] = useState('');
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const monthStart = format(startOfMonth(new Date()), 'yyyy-MM-dd');
   const monthEnd = format(endOfMonth(new Date()), 'yyyy-MM-dd');
 
-  const saleForm = useForm<SaleForm>({
+  // Add form
+  const { register, handleSubmit, reset, setValue, watch, control, formState: { errors } } = useForm<SaleForm>({
     resolver: zodResolver(saleSchema),
-    defaultValues: { date: today, quantity: 1 },
+    defaultValues: { date: today, customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] },
   });
+  const { fields, append, remove } = useFieldArray({ control, name: 'items' });
+  const watchItems = watch('items');
+
+  // Edit form (single item)
+  const editSchema = z.object({
+    date: z.string().min(1),
+    customer_name: z.string().min(1),
+    reference: z.string().optional(),
+    product_name: z.string().min(1),
+    quantity: z.coerce.number().min(1),
+    fixed_price: z.coerce.number().min(0),
+    volume_points: z.coerce.number().optional(),
+    comments: z.string().optional(),
+  });
+  type EditForm = z.infer<typeof editSchema>;
+  const { register: regEdit, handleSubmit: handleEditSubmit, reset: resetEdit, formState: { errors: editErrors } } = useForm<EditForm>({ resolver: zodResolver(editSchema) });
+
   const menuForm = useForm<MenuForm>({ resolver: zodResolver(menuSchema) });
   const membershipForm = useForm<MembershipForm>({
     resolver: zodResolver(membershipSchema),
@@ -94,16 +282,18 @@ export default function CenterPage() {
     setLoading(true);
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    const [{ data: salesData }, { data: menuData }, { data: membershipsData }, { data: visitsData }] = await Promise.all([
-      supabase.from('center_sales').select('*').order('date', { ascending: false }),
+    const [{ data: salesData }, { data: menuData }, { data: membershipsData }, { data: visitsData }, { data: productsData }] = await Promise.all([
+      supabase.from('center_sales').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('center_menu').select('*').order('item_name'),
       supabase.from('center_memberships').select('*').order('created_at', { ascending: false }),
       supabase.from('center_membership_visits').select('*').order('visit_date', { ascending: true }),
+      supabase.from('products').select('*').order('name'),
     ]);
     setSales(salesData ?? []);
     setMenu(menuData ?? []);
     setMemberships((membershipsData ?? []) as CenterMembership[]);
     setMembershipVisits((visitsData ?? []) as CenterMembershipVisit[]);
+    setProducts(productsData ?? []);
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
       if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
@@ -113,85 +303,177 @@ export default function CenterPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Revenue stats
+  // Filtered + grouped
+  const filteredSales = sales.filter((s) => {
+    if (filterCustomer && !s.customer_name.toLowerCase().includes(filterCustomer.toLowerCase())) return false;
+    if (filterStatus && s.payment_status !== filterStatus) return false;
+    if (filterDateFrom && s.date < filterDateFrom) return false;
+    if (filterDateTo && s.date > filterDateTo) return false;
+    return true;
+  });
+  const saleGroups = groupCenterSales(filteredSales);
+
+  // Summary totals
+  const totalRevenue = filteredSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalCashAmount = filteredSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalOnlineAmount = filteredSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalPendingAmount = filteredSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalVolumePoints = filteredSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+
+  // Today / monthly stats
   const todaySales = sales.filter((s) => s.date === today);
   const todayRevenue = todaySales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
   const monthlySales = sales.filter((s) => s.date >= monthStart && s.date <= monthEnd);
   const monthlyRevenue = monthlySales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
-  const todayShakes = todaySales.reduce((a, s) => a + s.quantity, 0);
-  const monthShakes = monthlySales.reduce((a, s) => a + s.quantity, 0);
 
-  const todayBreakdown = todaySales.reduce<Record<string, number>>((acc, s) => {
-    acc[s.product_name] = (acc[s.product_name] || 0) + s.quantity;
-    return acc;
-  }, {});
+  // Period report
+  const periodSales = sales.filter((s) => {
+    if (periodFrom && s.date < periodFrom) return false;
+    if (periodTo && s.date > periodTo) return false;
+    return true;
+  });
+  const periodRevenue = periodSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const periodCash = periodSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const periodOnline = periodSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const periodPending = periodSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
 
-  // Membership stats for 4-column header
-  const membershipTodayRevenue = memberships
-    .filter(m => m.start_date === today && m.payment_status === 'paid')
-    .reduce((a, m) => a + m.price, 0);
-  const membershipMonthlyRevenue = memberships
-    .filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid')
-    .reduce((a, m) => a + m.price, 0);
+  // Customer invoice
+  const uniqueCustomers = Array.from(new Set(sales.map((s) => s.customer_name)));
+  const customerInvoiceSales = sales.filter((s) => s.customer_name.toLowerCase() === invoiceCustomer.toLowerCase());
+  const customerInvoicePending = customerInvoiceSales.filter((s) => s.payment_status === 'pending');
+
+  // Membership stats
+  const membershipTodayRevenue = memberships.filter(m => m.start_date === today && m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
+  const membershipMonthlyRevenue = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
   const membershipShakesToday = membershipVisits.filter(v => v.visit_date === today).length;
   const membershipShakesMonth = membershipVisits.filter(v => v.visit_date >= monthStart && v.visit_date <= monthEnd).length;
   const membershipTodayEntries = memberships.filter(m => m.start_date === today && m.payment_status === 'paid').length;
   const membershipMonthEntries = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').length;
+  const activeMembershipsCount = memberships.filter(m => membershipVisits.filter(v => v.membership_id === m.id).length < m.total_shakes).length;
+  const membershipPendingAmount = memberships.filter(m => m.payment_status === 'pending').reduce((a, m) => a + m.price, 0);
 
-  // Sale CRUD
-  const onSaleSubmit = async (data: SaleForm) => {
+  // Product search helpers
+  const getFilteredSuggestions = (search: string) => {
+    const q = search.toLowerCase();
+    const menuMatches = menu.filter(m => m.item_name.toLowerCase().includes(q)).slice(0, 5);
+    const productMatches = products.filter(p => p.name.toLowerCase().includes(q) && !menuMatches.some(m => m.item_name === p.name)).slice(0, 5);
+    return { menuMatches, productMatches };
+  };
+
+  const handleLineProductSelect = (index: number, name: string, price: number, vp?: number) => {
+    setValue(`items.${index}.product_name`, name);
+    setValue(`items.${index}.fixed_price`, price);
+    if (vp !== undefined) setValue(`items.${index}.volume_points`, vp);
+    const s = [...productSearches];
+    s[index] = name;
+    setProductSearches(s);
+    setOpenDropdownIndex(null);
+  };
+
+  const handleAddLine = () => { append(emptyItem); setProductSearches([...productSearches, '']); };
+  const handleRemoveLine = (index: number) => { remove(index); const s = [...productSearches]; s.splice(index, 1); setProductSearches(s); };
+
+  const resetAddForm = () => {
+    reset({ date: today, customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] });
+    setProductSearches(['']);
+    setOpenDropdownIndex(null);
+  };
+
+  // CRUD
+  const onSubmit = async (data: SaleForm) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const payload = {
+    const isPending = data.payment_method === 'pending';
+    const rows = data.items.map((item) => ({
       user_id: user.id,
       date: data.date,
       customer_name: data.customer_name,
       reference: data.reference || null,
-      product_name: data.product_name,
-      quantity: data.quantity,
-      fixed_price: data.fixed_price,
-      volume_points: data.volume_points || 0,
-      comments: data.comments || null,
-    };
-    if (editSale) {
-      const { error } = await supabase.from('center_sales').update(payload).eq('id', editSale.id);
-      if (error) { toast({ title: 'Update failed', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Sale updated' });
-    } else {
-      const { error } = await supabase.from('center_sales').insert(payload);
-      if (error) { toast({ title: 'Add failed', description: error.message, variant: 'destructive' }); return; }
-      toast({ title: 'Center sale added' });
-    }
-    setAddSaleOpen(false);
-    setEditSale(null);
-    saleForm.reset({ date: today, quantity: 1 });
+      product_name: item.product_name,
+      quantity: item.quantity,
+      fixed_price: item.fixed_price,
+      volume_points: item.volume_points || 0,
+      comments: item.comments || null,
+      payment_status: isPending ? 'pending' as const : 'done' as const,
+      payment_method: isPending ? null : data.payment_method === 'cash' ? 'cash' as const : 'online' as const,
+    }));
+    const { error } = await supabase.from('center_sales').insert(rows);
+    if (error) { toast({ title: 'Add failed', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
+    setAddOpen(false);
+    resetAddForm();
     fetchData();
   };
 
-  const handleDeleteSale = async (id: number) => {
-    if (!confirm('Delete this sale?')) return;
+  const onEditSubmit = async (data: EditForm) => {
+    if (!editSale) return;
+    const supabase = createClient();
+    const { error } = await supabase.from('center_sales').update({
+      date: data.date, customer_name: data.customer_name, reference: data.reference || null,
+      product_name: data.product_name, quantity: data.quantity, fixed_price: data.fixed_price,
+      volume_points: data.volume_points || 0, comments: data.comments || null,
+    }).eq('id', editSale.id);
+    if (error) { toast({ title: 'Update failed', description: error.message, variant: 'destructive' }); return; }
+    toast({ title: 'Sale updated' });
+    setEditOpen(false);
+    setEditSale(null);
+    fetchData();
+    if (invoiceGroup) {
+      const updated = sales.map(s => s.id === editSale.id ? { ...s, ...data } : s);
+      const reGrouped = groupCenterSales(updated as CenterSale[]);
+      const found = reGrouped.find(g => g.key === invoiceGroup.key);
+      if (found) setInvoiceGroup(found); else setInvoiceOpen(false);
+    }
+  };
+
+  const handleEdit = (sale: CenterSale) => {
+    setEditSale(sale);
+    resetEdit({ date: sale.date, customer_name: sale.customer_name, reference: sale.reference ?? '', product_name: sale.product_name, quantity: sale.quantity, fixed_price: sale.fixed_price, volume_points: sale.volume_points, comments: sale.comments ?? '' });
+    setEditOpen(true);
+  };
+
+  const handleDeleteItem = async (id: number) => {
+    if (!confirm('Remove this product from the sale?')) return;
     const supabase = createClient();
     await supabase.from('center_sales').delete().eq('id', id);
+    toast({ title: 'Product removed' });
+    fetchData();
+    if (invoiceGroup) {
+      const updated = sales.filter(s => s.id !== id);
+      const reGrouped = groupCenterSales(updated);
+      const found = reGrouped.find(g => g.key === invoiceGroup.key);
+      if (found) setInvoiceGroup(found); else setInvoiceOpen(false);
+    }
+  };
+
+  const handleDeleteGroup = async (group: CenterSaleGroup) => {
+    if (!confirm(`Delete all ${group.items.length} product(s) in this sale?`)) return;
+    const supabase = createClient();
+    await supabase.from('center_sales').delete().in('id', group.allIds);
     toast({ title: 'Sale deleted' });
     fetchData();
   };
 
-  const handleEditSale = (sale: CenterSale) => {
-    setEditSale(sale);
-    saleForm.reset({
-      date: sale.date,
-      customer_name: sale.customer_name,
-      reference: sale.reference ?? '',
-      product_name: sale.product_name,
-      quantity: sale.quantity,
-      fixed_price: sale.fixed_price,
-      volume_points: sale.volume_points,
-      comments: sale.comments ?? '',
-    });
-    setAddSaleOpen(true);
+  const handleMarkGroupPaid = async (group: CenterSaleGroup, method: 'online' | 'cash') => {
+    const supabase = createClient();
+    const pendingIds = group.items.filter(s => s.payment_status === 'pending').map(s => s.id);
+    await supabase.from('center_sales').update({ payment_status: 'done', payment_method: method }).in('id', pendingIds);
+    toast({ title: 'Payments marked as done' });
+    fetchData();
+    setInvoiceOpen(false);
   };
 
+  const handleMarkCustomerPaid = async (method: 'online' | 'cash') => {
+    const supabase = createClient();
+    await supabase.from('center_sales').update({ payment_status: 'done', payment_method: method }).in('id', customerInvoicePending.map(s => s.id));
+    toast({ title: 'Payments marked as done' });
+    fetchData();
+    setCustomerInvoiceOpen(false);
+    setInvoiceCustomer('');
+  };
+
+  // Menu CRUD
   const onMenuSubmit = async (data: MenuForm) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -218,25 +500,12 @@ export default function CenterPage() {
     fetchData();
   };
 
-  const handleMenuItemSelect = (item: CenterMenu) => {
-    saleForm.setValue('product_name', item.item_name);
-    saleForm.setValue('fixed_price', item.fixed_price);
-  };
-
   // Membership CRUD
   const onMembershipSubmit = async (data: MembershipForm) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const { error } = await supabase.from('center_memberships').insert({
-      user_id: user.id,
-      customer_name: data.customer_name,
-      reference: data.reference || null,
-      total_shakes: data.total_shakes,
-      price: data.price,
-      payment_status: data.payment_status,
-      start_date: data.start_date,
-    });
+    const { error } = await supabase.from('center_memberships').insert({ user_id: user.id, customer_name: data.customer_name, reference: data.reference || null, total_shakes: data.total_shakes, price: data.price, payment_status: data.payment_status, start_date: data.start_date });
     if (error) { toast({ title: 'Failed to create membership', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'Membership created' });
     setAddMembershipOpen(false);
@@ -246,25 +515,14 @@ export default function CenterPage() {
 
   const handleMarkVisit = async (membership: CenterMembership, visitDate: string) => {
     const visits = membershipVisits.filter(v => v.membership_id === membership.id);
-    if (visits.length >= membership.total_shakes) {
-      toast({ title: 'Membership complete', description: 'All shakes have been consumed.', variant: 'destructive' });
-      return;
-    }
-    if (visits.some(v => v.visit_date === visitDate)) {
-      toast({ title: 'Already marked', description: `${membership.customer_name} already has a visit on ${visitDate}.`, variant: 'destructive' });
-      return;
-    }
+    if (visits.length >= membership.total_shakes) { toast({ title: 'Membership complete', description: 'All shakes have been consumed.', variant: 'destructive' }); return; }
+    if (visits.some(v => v.visit_date === visitDate)) { toast({ title: 'Already marked', description: `${membership.customer_name} already has a visit on ${visitDate}.`, variant: 'destructive' }); return; }
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const { error } = await supabase.from('center_membership_visits').insert({
-      membership_id: membership.id,
-      user_id: user.id,
-      visit_date: visitDate,
-    });
+    const { error } = await supabase.from('center_membership_visits').insert({ membership_id: membership.id, user_id: user.id, visit_date: visitDate });
     if (error) { toast({ title: 'Failed to mark visit', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'Visit marked', description: `${membership.customer_name} — ${visitDate}` });
-    // Reset the date picker back to today for this membership
     setVisitDateMap(prev => ({ ...prev, [membership.id]: today }));
     fetchData();
   };
@@ -306,7 +564,7 @@ export default function CenterPage() {
     if (!user) return;
     const { error } = await supabase.from('center_memberships').delete().eq('user_id', user.id);
     if (error) { toast({ title: 'Reset failed', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'All memberships deleted', description: 'Membership data has been reset.' });
+    toast({ title: 'All memberships deleted' });
     setResetOpen(false);
     setResetConfirmText('');
     fetchData();
@@ -314,170 +572,50 @@ export default function CenterPage() {
 
   const printMembershipReport = () => {
     const totalMemberships = memberships.length;
-    const totalRevenue = memberships.reduce((a, m) => a + m.price, 0);
+    const totalRevenueMem = memberships.reduce((a, m) => a + m.price, 0);
     const pendingCount = memberships.filter(m => m.payment_status === 'pending').length;
     const pendingRev = memberships.filter(m => m.payment_status === 'pending').reduce((a, m) => a + m.price, 0);
     const totalShakesUsed = membershipVisits.length;
-
     const memberRows = memberships.map(m => {
-      const visits = membershipVisits
-        .filter(v => v.membership_id === m.id)
-        .sort((a, b) => a.visit_date.localeCompare(b.visit_date));
-      const used = visits.length;
-      const remaining = m.total_shakes - used;
-      const isComplete = used >= m.total_shakes;
-      const visitPills = visits.map(v =>
-        `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 7px;border-radius:20px;margin:2px 2px 2px 0">${v.visit_date}</span>`
-      ).join('');
-      const shakeCircles = Array.from({ length: m.total_shakes }).map((_, i) =>
-        i < used
-          ? `<span style="color:#16a34a;font-size:14px" title="${visits[i]?.visit_date ?? ''}">&#10003;</span>`
-          : `<span style="color:#d1d5db;font-size:14px">&#9675;</span>`
-      ).join(' ');
-      return `
-        <tr>
-          <td>
-            <strong>${m.customer_name}</strong>
-            ${m.reference ? `<br/><span style="color:#666;font-size:11px">${m.reference}</span>` : ''}
-          </td>
-          <td>${m.start_date}</td>
-          <td class="num">${shakeCircles}<br/><span style="font-size:11px;color:#555">${used}/${m.total_shakes}</span></td>
-          <td class="num">${remaining}</td>
-          <td class="num">&#8377;${m.price.toFixed(2)}</td>
-          <td style="text-align:center">
-            <span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${m.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${m.payment_status === 'paid' ? '#166534' : '#c2410c'}">
-              ${m.payment_status === 'paid' ? 'Paid' : 'Pending'}
-            </span>
-          </td>
-          <td style="text-align:center">
-            ${isComplete ? '<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151">Complete</span>' : '<span style="color:#16a34a;font-size:11px">Active</span>'}
-          </td>
-          <td>${visitPills || '<span style="color:#999;font-size:11px">No visits</span>'}</td>
-          <td style="color:#555;font-size:11px;font-style:italic">${m.comments ? m.comments.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '<span style="color:#ccc">—</span>'}</td>
-        </tr>`;
+      const visits = membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+      const used = visits.length; const remaining = m.total_shakes - used; const isComplete = used >= m.total_shakes;
+      const visitPills = visits.map(v => `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 7px;border-radius:20px;margin:2px 2px 2px 0">${v.visit_date}</span>`).join('');
+      const shakeCircles = Array.from({ length: m.total_shakes }).map((_, i) => i < used ? `<span style="color:#16a34a;font-size:14px" title="${visits[i]?.visit_date ?? ''}">&#10003;</span>` : `<span style="color:#d1d5db;font-size:14px">&#9675;</span>`).join(' ');
+      return `<tr><td><strong>${m.customer_name}</strong>${m.reference ? `<br/><span style="color:#666;font-size:11px">${m.reference}</span>` : ''}</td><td>${m.start_date}</td><td class="num">${shakeCircles}<br/><span style="font-size:11px;color:#555">${used}/${m.total_shakes}</span></td><td class="num">${remaining}</td><td class="num">&#8377;${m.price.toFixed(2)}</td><td style="text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${m.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${m.payment_status === 'paid' ? '#166534' : '#c2410c'}">${m.payment_status === 'paid' ? 'Paid' : 'Pending'}</span></td><td style="text-align:center">${isComplete ? '<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151">Complete</span>' : '<span style="color:#16a34a;font-size:11px">Active</span>'}</td><td>${visitPills || '<span style="color:#999;font-size:11px">No visits</span>'}</td></tr>`;
     }).join('');
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Membership Report ${format(new Date(), 'yyyy-MM-dd')}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
-    h1 { font-size: 22px; margin-bottom: 4px; }
-    h2 { font-size: 15px; margin: 24px 0 10px; color: #333; }
-    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
-    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
-    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; }
-    .card .label { font-size: 10px; color: #666; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .card .value { font-size: 18px; font-weight: 700; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; }
-    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 11px; border-bottom: 2px solid #ddd; }
-    td { padding: 7px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
-    .num { text-align: center; }
-    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
-    @media print { button { display: none; } }
-  </style>
-</head>
-<body>
-  <h1>Membership Report</h1>
-  <p class="sub">Herbalife Sales Manager</p>
-  <div class="meta">
-    <div>
-      <strong>Total Members:</strong> ${totalMemberships}<br/>
-      <strong>Shakes Used:</strong> ${totalShakesUsed}
-    </div>
-    <div style="text-align:right">
-      <strong>Manager:</strong> ${managerName}<br/>
-      <strong>Generated:</strong> ${new Date().toLocaleString()}
-    </div>
-  </div>
-  <div class="summary-grid">
-    <div class="card"><div class="label">Total Members</div><div class="value" style="color:#1d4ed8">${totalMemberships}</div></div>
-    <div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#be123c">&#8377;${totalRevenue.toFixed(2)}</div></div>
-    <div class="card"><div class="label">Pending Payment</div><div class="value" style="color:#c2410c">&#8377;${pendingRev.toFixed(2)}</div><div class="label">${pendingCount} members</div></div>
-    <div class="card"><div class="label">Total Shakes Used</div><div class="value" style="color:#16a34a">${totalShakesUsed}</div></div>
-  </div>
-  <h2>Member Details</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Customer</th>
-        <th>Start Date</th>
-        <th class="num">Progress</th>
-        <th class="num">Remaining</th>
-        <th class="num">Price</th>
-        <th style="text-align:center">Payment</th>
-        <th style="text-align:center">Status</th>
-        <th>Visit Dates</th>
-        <th>Comment</th>
-      </tr>
-    </thead>
-    <tbody>${memberRows}</tbody>
-  </table>
-  <div class="footer">Herbalife Sales Manager · Membership Report · Generated ${new Date().toLocaleString()}</div>
-  <script>window.onload = () => { window.print(); }<\/script>
-</body>
-</html>`;
-
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Membership Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px}h1{font-size:22px;margin-bottom:4px}.sub{color:#666;font-size:12px;margin-bottom:24px}.meta{display:flex;justify-content:space-between;margin-bottom:24px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}.card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px}.card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:18px;font-weight:700}table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px}th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:11px;border-bottom:2px solid #ddd}td{padding:7px 10px;border-bottom:1px solid #eee;vertical-align:top}.num{text-align:center}.footer{margin-top:40px;font-size:11px;color:#999;text-align:center}@media print{button{display:none}}</style></head><body>
+    <h1>Membership Report</h1><p class="sub">Herbalife Sales Manager</p>
+    <div class="meta"><div><strong>Total Members:</strong> ${totalMemberships}<br/><strong>Shakes Used:</strong> ${totalShakesUsed}</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
+    <div class="summary-grid"><div class="card"><div class="label">Total Members</div><div class="value" style="color:#1d4ed8">${totalMemberships}</div></div><div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#be123c">&#8377;${totalRevenueMem.toFixed(2)}</div></div><div class="card"><div class="label">Pending Payment</div><div class="value" style="color:#c2410c">&#8377;${pendingRev.toFixed(2)}</div><div class="label">${pendingCount} members</div></div><div class="card"><div class="label">Total Shakes Used</div><div class="value" style="color:#16a34a">${totalShakesUsed}</div></div></div>
+    <table><thead><tr><th>Customer</th><th>Start Date</th><th class="num">Progress</th><th class="num">Remaining</th><th class="num">Price</th><th style="text-align:center">Payment</th><th style="text-align:center">Status</th><th>Visit Dates</th></tr></thead><tbody>${memberRows}</tbody></table>
+    <div class="footer">Herbalife Sales Manager · Membership Report · Generated ${new Date().toLocaleString()}</div>
+    <script>window.onload=()=>{window.print()}<\/script></body></html>`;
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
   };
 
-  const uniqueCustomers = Array.from(new Set(sales.map((s) => s.customer_name)));
+  const statusBadgeVariant = (status: CenterSaleGroup['status']) =>
+    status === 'done' ? 'success' : status === 'pending' ? 'warning' : 'secondary';
 
-  // Membership stats
-  const activeMembershipsCount = memberships.filter(m => {
-    const used = membershipVisits.filter(v => v.membership_id === m.id).length;
-    return used < m.total_shakes;
-  }).length;
-  const pendingAmount = memberships
-    .filter(m => m.payment_status === 'pending')
-    .reduce((a, m) => a + m.price, 0);
-
-  // Group memberships by customer name, preserving creation order of first membership
   const filteredCustomerGroups = Array.from(
-    memberships.reduce((map, m) => {
-      if (!map.has(m.customer_name)) map.set(m.customer_name, []);
-      map.get(m.customer_name)!.push(m);
-      return map;
-    }, new Map<string, CenterMembership[]>())
+    memberships.reduce((map, m) => { if (!map.has(m.customer_name)) map.set(m.customer_name, []); map.get(m.customer_name)!.push(m); return map; }, new Map<string, CenterMembership[]>())
   ).map(([name, ms]) => {
-    const withVisits = ms.map(m => ({
-      membership: m,
-      visits: membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date)),
-    }));
-    return {
-      name,
-      active: withVisits.filter(({ membership: m, visits }) => visits.length < m.total_shakes),
-      completed: withVisits.filter(({ membership: m, visits }) => visits.length >= m.total_shakes),
-    };
+    const withVisits = ms.map(m => ({ membership: m, visits: membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date)) }));
+    return { name, active: withVisits.filter(({ membership: m, visits }) => visits.length < m.total_shakes), completed: withVisits.filter(({ membership: m, visits }) => visits.length >= m.total_shakes) };
   }).filter(group => !membershipSearch || group.name.toLowerCase().includes(membershipSearch.toLowerCase()));
 
   return (
     <div className="space-y-6">
-      {/* Header with tab switcher */}
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Center</h1>
           <p className="text-muted-foreground text-sm">Customer management & revenue</p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant={activeTab === 'sales' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('sales')}
-          >
-            Sales
-          </Button>
-          <Button
-            variant={activeTab === 'memberships' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('memberships')}
-            className="gap-2"
-          >
-            <Users className="h-4 w-4" />
-            Memberships
+          <Button variant={activeTab === 'sales' ? 'default' : 'outline'} onClick={() => setActiveTab('sales')}>Sales</Button>
+          <Button variant={activeTab === 'memberships' ? 'default' : 'outline'} onClick={() => setActiveTab('memberships')} className="gap-2">
+            <Users className="h-4 w-4" />Memberships
           </Button>
         </div>
       </div>
@@ -485,155 +623,285 @@ export default function CenterPage() {
       {/* ─── SALES TAB ─── */}
       {activeTab === 'sales' && (
         <>
-          <div className="flex gap-2 flex-wrap">
-            <Dialog open={menuOpen} onOpenChange={setMenuOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="gap-2">
-                  <Settings className="h-4 w-4" />
-                  Manage Menu
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Center Menu</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4">
-                  <form onSubmit={menuForm.handleSubmit(onMenuSubmit)} className="flex gap-2">
-                    <div className="flex-1 space-y-1">
-                      <Input placeholder="Item name (e.g. Shake)" {...menuForm.register('item_name')} />
-                      {menuForm.formState.errors.item_name && <p className="text-xs text-destructive">{menuForm.formState.errors.item_name.message}</p>}
+          {/* Action buttons */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold">Center Sales</h2>
+              <p className="text-muted-foreground text-sm">Sales made at the center</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {/* Period Report */}
+              <Dialog open={periodReportOpen} onOpenChange={(v) => { setPeriodReportOpen(v); if (!v) { setPeriodFrom(''); setPeriodTo(''); } }}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="gap-2"><FileText className="h-4 w-4" />Period Report</Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader><DialogTitle>Center Period Sales Report</DialogTitle></DialogHeader>
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2"><Label>From Date</Label><Input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} /></div>
+                      <div className="space-y-2"><Label>To Date</Label><Input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} /></div>
                     </div>
-                    <div className="w-28 space-y-1">
-                      <Input type="number" step="0.01" placeholder="Price ₹" {...menuForm.register('fixed_price')} />
-                      {menuForm.formState.errors.fixed_price && <p className="text-xs text-destructive">{menuForm.formState.errors.fixed_price.message}</p>}
-                    </div>
-                    <Button type="submit" size="sm">{editMenuItem ? 'Update' : 'Add'}</Button>
-                  </form>
-                  <div className="space-y-2">
-                    {menu.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between p-2 border rounded-md">
-                        <div>
-                          <p className="font-medium text-sm">{item.item_name}</p>
-                          <p className="text-xs text-muted-foreground">{formatCurrency(item.fixed_price)}</p>
+                    {(periodFrom || periodTo) && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Total Revenue</p><p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatCurrency(periodRevenue)}</p></div>
+                          <div className="bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Cash Received</p><p className="text-lg font-bold text-green-700 dark:text-green-400">{formatCurrency(periodCash)}</p></div>
+                          <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Online Received</p><p className="text-lg font-bold text-blue-600 dark:text-blue-400">{formatCurrency(periodOnline)}</p></div>
+                          <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Pending Amount</p><p className="text-lg font-bold text-orange-600 dark:text-orange-400">{formatCurrency(periodPending)}</p></div>
                         </div>
-                        <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setEditMenuItem(item); menuForm.reset({ item_name: item.item_name, fixed_price: item.fixed_price }); }}>
-                            <Pencil className="h-3 w-3" />
+                        <p className="text-xs text-muted-foreground text-center">{periodSales.length} records · {periodSales.reduce((a, s) => a + s.quantity, 0)} units</p>
+                        {periodSales.length > 0 ? (
+                          <Button className="w-full gap-2" onClick={() => printCenterPeriodReport(periodSales, periodFrom || 'all', periodTo || 'all', managerName)}>
+                            <Download className="h-4 w-4" />Download Report
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteMenuItem(item.id)}>
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
+                        ) : <p className="text-center text-sm text-muted-foreground py-2">No sales found in this period.</p>}
                       </div>
-                    ))}
-                    {menu.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No menu items yet.</p>}
+                    )}
+                    {!periodFrom && !periodTo && <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>}
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
+                </DialogContent>
+              </Dialog>
 
-            <Dialog open={addSaleOpen} onOpenChange={(v) => { setAddSaleOpen(v); if (!v) { setEditSale(null); saleForm.reset({ date: today, quantity: 1 }); } }}>
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  Add Sale
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <DialogTitle>{editSale ? 'Edit Sale' : 'Add Center Sale'}</DialogTitle>
-                </DialogHeader>
-                <form onSubmit={saleForm.handleSubmit(onSaleSubmit)} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Date</Label>
-                      <Input type="date" {...saleForm.register('date')} />
-                    </div>
+              {/* Customer Invoice */}
+              <Dialog open={customerInvoiceOpen} onOpenChange={(v) => { setCustomerInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" className="gap-2"><Receipt className="h-4 w-4" />Invoice</Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader><DialogTitle>Customer Invoice</DialogTitle></DialogHeader>
+                  <div className="space-y-4">
                     <div className="space-y-2">
                       <Label>Customer Name</Label>
-                      <Input placeholder="Customer" {...saleForm.register('customer_name')} list="center-cust" />
-                      <datalist id="center-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
-                      {saleForm.formState.errors.customer_name && <p className="text-xs text-destructive">{saleForm.formState.errors.customer_name.message}</p>}
+                      <Input placeholder="Type customer name..." value={invoiceCustomer} onChange={(e) => setInvoiceCustomer(e.target.value)} list="inv-cust" />
+                      <datalist id="inv-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
                     </div>
+                    {invoiceCustomer && customerInvoiceSales.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex justify-end">
+                          <Button size="sm" variant="outline" className="gap-2" onClick={() => printCenterCustomerInvoice(customerInvoiceSales, invoiceCustomer, managerName)}>
+                            <Download className="h-4 w-4" />Download PDF
+                          </Button>
+                        </div>
+                        <div className="border rounded-lg overflow-hidden">
+                          <Table>
+                            <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Unit</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-center">Status</TableHead></TableRow></TableHeader>
+                            <TableBody>
+                              {customerInvoiceSales.map((s) => (
+                                <TableRow key={s.id}>
+                                  <TableCell className="text-sm">{s.product_name}</TableCell>
+                                  <TableCell className="text-right text-sm">{s.quantity}</TableCell>
+                                  <TableCell className="text-right text-sm">{formatCurrency(s.fixed_price)}</TableCell>
+                                  <TableCell className="text-right text-sm font-medium">{formatCurrency(s.fixed_price * s.quantity)}</TableCell>
+                                  <TableCell className="text-center"><Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge></TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                        <div className="bg-muted p-3 rounded-lg space-y-1 text-sm">
+                          <div className="flex justify-between"><span>Total Revenue</span><span className="font-medium">{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
+                          <div className="flex justify-between"><span className="text-emerald-600">Cash</span><span>{formatCurrency(customerInvoiceSales.filter(s => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
+                          <div className="flex justify-between"><span className="text-blue-600">Online</span><span>{formatCurrency(customerInvoiceSales.filter(s => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
+                          {customerInvoicePending.length > 0 && <div className="flex justify-between text-orange-500 font-bold border-t pt-1 mt-1"><span>Pending</span><span>{formatCurrency(customerInvoicePending.reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>}
+                        </div>
+                        {customerInvoicePending.length > 0 ? (
+                          <div><p className="text-sm font-medium mb-2">{customerInvoicePending.length} pending. Mark as done:</p>
+                            <div className="flex gap-2">
+                              <Button size="sm" className="flex-1" onClick={() => handleMarkCustomerPaid('online')}>Online</Button>
+                              <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkCustomerPaid('cash')}>Cash</Button>
+                            </div>
+                          </div>
+                        ) : <Badge variant="success" className="w-full justify-center py-1">All payments done</Badge>}
+                      </div>
+                    )}
+                    {invoiceCustomer && customerInvoiceSales.length === 0 && <p className="text-muted-foreground text-sm text-center py-4">No sales found for this customer.</p>}
                   </div>
-                  <div className="space-y-2">
-                    <Label>Reference (optional)</Label>
-                    <Input placeholder="Reference" {...saleForm.register('reference')} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Product (from menu)</Label>
-                    <div className="flex gap-2 flex-wrap">
-                      {menu.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          className="px-3 py-1.5 text-sm border rounded-full hover:bg-accent transition-colors"
-                          onClick={() => handleMenuItemSelect(item)}
-                        >
-                          {item.item_name} — {formatCurrency(item.fixed_price)}
-                        </button>
-                      ))}
+                </DialogContent>
+              </Dialog>
+
+              {/* Add Sale */}
+              <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) resetAddForm(); }}>
+                <DialogTrigger asChild>
+                  <Button className="gap-2"><Plus className="h-4 w-4" />Add Sale</Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+                  <DialogHeader><DialogTitle>Add Center Sale</DialogTitle></DialogHeader>
+                  <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 overflow-y-auto flex-1 pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-2"><Label>Date</Label><Input type="date" {...register('date')} />{errors.date && <p className="text-xs text-destructive">{errors.date.message}</p>}</div>
+                      <div className="space-y-2">
+                        <Label>Customer Name</Label>
+                        <Input placeholder="Customer" {...register('customer_name')} list="center-cust" />
+                        <datalist id="center-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                        {errors.customer_name && <p className="text-xs text-destructive">{errors.customer_name.message}</p>}
+                      </div>
                     </div>
-                    <Input placeholder="Or type product name" {...saleForm.register('product_name')} />
-                    {saleForm.formState.errors.product_name && <p className="text-xs text-destructive">{saleForm.formState.errors.product_name.message}</p>}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-2"><Label>Reference (optional)</Label><Input placeholder="Reference" {...register('reference')} /></div>
+
+                    {/* Product lines */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label>Products</Label>
+                        <Button type="button" size="sm" variant="outline" className="gap-1 h-7 text-xs" onClick={handleAddLine}><Plus className="h-3 w-3" />Add Product</Button>
+                      </div>
+
+                      {/* Menu quick-select */}
+                      {menu.length > 0 && (
+                        <div className="flex gap-2 flex-wrap">
+                          {menu.map((item) => (
+                            <button key={item.id} type="button" className="px-3 py-1 text-xs border rounded-full hover:bg-accent transition-colors" onClick={() => {
+                              const idx = fields.length - 1;
+                              handleLineProductSelect(idx, item.item_name, item.fixed_price);
+                            }}>
+                              {item.item_name} — {formatCurrency(item.fixed_price)}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {fields.map((field, index) => {
+                        const qty = watchItems?.[index]?.quantity || 1;
+                        const price = watchItems?.[index]?.fixed_price || 0;
+                        const { menuMatches, productMatches } = getFilteredSuggestions(productSearches[index] || '');
+                        const hasDropdown = openDropdownIndex === index && (productSearches[index] || '').length > 0 && (menuMatches.length > 0 || productMatches.length > 0);
+
+                        return (
+                          <div key={field.id} className="border rounded-lg p-3 space-y-3 bg-muted/30">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold text-muted-foreground">Product {index + 1}</span>
+                              {fields.length > 1 && (
+                                <Button type="button" size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => handleRemoveLine(index)}><X className="h-3.5 w-3.5" /></Button>
+                              )}
+                            </div>
+
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="Search product..."
+                                className="pl-9 bg-background"
+                                value={productSearches[index] || ''}
+                                onChange={(e) => {
+                                  const s = [...productSearches]; s[index] = e.target.value; setProductSearches(s);
+                                  setValue(`items.${index}.product_name`, e.target.value);
+                                  setOpenDropdownIndex(index);
+                                }}
+                                onFocus={() => setOpenDropdownIndex(index)}
+                              />
+                              {hasDropdown && (
+                                <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                                  {menuMatches.length > 0 && (<>
+                                    <div className="px-3 py-1 text-xs text-muted-foreground font-medium bg-muted/50">Center Menu</div>
+                                    {menuMatches.map(item => (
+                                      <button key={`m-${item.id}`} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm" onClick={() => handleLineProductSelect(index, item.item_name, item.fixed_price)}>
+                                        <div className="font-medium">{item.item_name}</div>
+                                        <div className="text-xs text-muted-foreground">{formatCurrency(item.fixed_price)}</div>
+                                      </button>
+                                    ))}
+                                  </>)}
+                                  {productMatches.length > 0 && (<>
+                                    <div className="px-3 py-1 text-xs text-muted-foreground font-medium bg-muted/50">Products</div>
+                                    {productMatches.map(p => (
+                                      <button key={`p-${p.id}`} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm" onClick={() => handleLineProductSelect(index, p.name, p.retail_price, p.volume_points)}>
+                                        <div className="font-medium">{p.name}</div>
+                                        <div className="text-xs text-muted-foreground">{formatCurrency(p.retail_price)}</div>
+                                      </button>
+                                    ))}
+                                  </>)}
+                                </div>
+                              )}
+                              {errors.items?.[index]?.product_name && <p className="text-xs text-destructive mt-1">{errors.items[index]?.product_name?.message}</p>}
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1"><Label className="text-xs">Quantity</Label><Input type="number" min={1} className="bg-background" {...register(`items.${index}.quantity`)} /></div>
+                              <div className="space-y-1"><Label className="text-xs">Volume Points</Label><Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.volume_points`)} /></div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Price (₹) <span className="text-muted-foreground">per unit</span></Label>
+                              <Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.fixed_price`)} />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
+                              <div><p className="text-muted-foreground">Qty × Price</p><p className="font-semibold">{qty} × {formatCurrency(price)}</p></div>
+                              <div><p className="text-muted-foreground">Total</p><p className="font-semibold text-primary">{formatCurrency(price * qty)}</p></div>
+                            </div>
+
+                            <div className="space-y-1"><Label className="text-xs">Comments (optional)</Label><Input placeholder="Notes..." className="bg-background" {...register(`items.${index}.comments`)} /></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {fields.length > 1 && (
+                      <div className="bg-primary/5 border border-primary/20 rounded-lg px-4 py-3 flex justify-between items-center">
+                        <span className="text-sm font-medium">Grand Total ({fields.length} products)</span>
+                        <span className="font-bold text-primary text-base">{formatCurrency((watchItems || []).reduce((a, item) => a + (item.fixed_price || 0) * (item.quantity || 1), 0))}</span>
+                      </div>
+                    )}
+
+                    {/* Payment method */}
                     <div className="space-y-2">
-                      <Label>Quantity</Label>
-                      <Input type="number" min={1} {...saleForm.register('quantity')} />
+                      <Label>Payment</Label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {(['cash', 'online', 'pending'] as const).map((method) => {
+                          const selected = watch('payment_method') === method;
+                          const colors: Record<string, string> = {
+                            cash: selected ? 'bg-green-600 text-white border-green-600 hover:bg-green-700' : 'border-green-200 text-green-700 hover:bg-green-50 dark:border-green-800 dark:text-green-400 dark:hover:bg-green-950/30',
+                            online: selected ? 'bg-blue-600 text-white border-blue-600 hover:bg-blue-700' : 'border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400 dark:hover:bg-blue-950/30',
+                            pending: selected ? 'bg-orange-500 text-white border-orange-500 hover:bg-orange-600' : 'border-orange-200 text-orange-600 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-400 dark:hover:bg-orange-950/30',
+                          };
+                          return (
+                            <button key={method} type="button" className={`rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors ${colors[method]}`} onClick={() => setValue('payment_method', method)}>
+                              {method === 'online' ? 'Online' : method === 'cash' ? 'Cash' : 'Pending'}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Price (₹)</Label>
-                      <Input type="number" step="0.01" {...saleForm.register('fixed_price')} />
-                      {saleForm.formState.errors.fixed_price && <p className="text-xs text-destructive">{saleForm.formState.errors.fixed_price.message}</p>}
+
+                    <div className="flex gap-2 justify-end">
+                      <Button type="button" variant="outline" onClick={() => { setAddOpen(false); resetAddForm(); }}>Cancel</Button>
+                      <Button type="submit">Add Sale{fields.length > 1 ? ` (${fields.length})` : ''}</Button>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Volume Points</Label>
-                      <Input type="number" step="0.01" {...saleForm.register('volume_points')} />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Comments (optional)</Label>
-                    <Textarea placeholder="Any notes..." {...saleForm.register('comments')} rows={2} />
-                  </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button type="button" variant="outline" onClick={() => { setAddSaleOpen(false); setEditSale(null); saleForm.reset({ date: today, quantity: 1 }); }}>Cancel</Button>
-                    <Button type="submit">{editSale ? 'Update' : 'Add Sale'}</Button>
-                  </div>
-                </form>
-              </DialogContent>
-            </Dialog>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </div>
           </div>
 
-          {/* Revenue summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{formatCurrency(todayRevenue)}</p><p className="text-xs text-muted-foreground">{todaySales.reduce((a, s) => a + s.quantity, 0)} items · {todaySales.length} entries</p></CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{formatCurrency(monthlyRevenue)}</p><p className="text-xs text-muted-foreground">{monthlySales.reduce((a, s) => a + s.quantity, 0)} items · {monthlySales.length} entries</p></CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{todayShakes}</p><p className="text-xs text-muted-foreground">total shakes served</p></CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader>
-              <CardContent><p className="text-xl font-bold">{monthShakes}</p><p className="text-xs text-muted-foreground">total shakes served</p></CardContent>
-            </Card>
+          {/* Filters */}
+          <Card>
+            <CardContent className="pt-4 pb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <Input placeholder="Filter by customer..." value={filterCustomer} onChange={(e) => setFilterCustomer(e.target.value)} />
+                <select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                  <option value="">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="done">Done</option>
+                </select>
+                <Input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} />
+                <Input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Received</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Received</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Amount</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-orange-500">{formatCurrency(totalPendingAmount)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
           </div>
 
-          {/* Today's breakdown */}
-          {Object.keys(todayBreakdown).length > 0 && (
+          {/* Today breakdown */}
+          {todaySales.length > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Today&apos;s Item Breakdown</CardTitle>
-              </CardHeader>
+              <CardHeader><CardTitle className="text-sm">Today — {formatCurrency(todayRevenue)} · {todaySales.reduce((a,s)=>a+s.quantity,0)} items</CardTitle></CardHeader>
               <CardContent>
-                <div className="flex flex-wrap gap-3">
-                  {Object.entries(todayBreakdown).map(([item, qty]) => (
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(todaySales.reduce<Record<string,number>>((acc,s)=>{ acc[s.product_name]=(acc[s.product_name]||0)+s.quantity; return acc; },{})).map(([item,qty]) => (
                     <div key={item} className="flex items-center gap-2 bg-muted rounded-full px-3 py-1">
                       <span className="text-sm font-medium">{item}</span>
                       <span className="text-sm text-muted-foreground">×{qty}</span>
@@ -644,47 +912,102 @@ export default function CenterPage() {
             </Card>
           )}
 
-          {/* Sales table */}
-          {loading ? (
-            <div className="text-center py-12 text-muted-foreground">Loading...</div>
-          ) : (
-            <Card>
-              <CardContent className="p-0">
-                {sales.length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground">No center sales yet.</div>
-                ) : (
-                  <div className="overflow-x-auto">
+          {/* Grouped Sales Table */}
+          <Card>
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="p-8 text-center text-muted-foreground">Loading...</div>
+              ) : saleGroups.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground">No center sales found.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Customer</TableHead>
+                        <TableHead className="hidden md:table-cell">Reference</TableHead>
+                        <TableHead className="text-right">Products</TableHead>
+                        <TableHead className="text-right">Total Qty</TableHead>
+                        <TableHead className="text-right hidden xl:table-cell">Volume</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                        <TableHead className="text-right hidden lg:table-cell">Pending</TableHead>
+                        <TableHead className="hidden md:table-cell">Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {saleGroups.map((group) => (
+                        <TableRow key={group.key} className="cursor-pointer hover:bg-accent/50" onClick={() => { setInvoiceGroup(group); setInvoiceOpen(true); }}>
+                          <TableCell className="text-sm">{formatDate(group.date)}</TableCell>
+                          <TableCell className="text-sm font-medium">{group.customer_name}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground hidden md:table-cell">{group.reference ?? '—'}</TableCell>
+                          <TableCell className="text-right text-sm">{group.items.length}</TableCell>
+                          <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
+                          <TableCell className="text-right text-sm hidden xl:table-cell">
+                            {group.totalVP > 0 ? <span className="text-purple-600 font-medium">{group.totalVP.toFixed(2)} VP</span> : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell className="text-right text-sm font-medium">{formatCurrency(group.totalAmount)}</TableCell>
+                          <TableCell className="text-right text-sm hidden lg:table-cell">
+                            {group.pendingAmount > 0 ? <span className="text-orange-500 font-medium">{formatCurrency(group.pendingAmount)}</span> : <span className="text-muted-foreground">—</span>}
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell">
+                            <Badge variant={statusBadgeVariant(group.status)}>{group.status === 'mixed' ? 'partial' : group.status}</Badge>
+                          </TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
+                            <div className="flex gap-1 justify-end">
+                              <Button size="icon" variant="ghost" className="h-8 w-8" title="View" onClick={(e) => { e.stopPropagation(); setInvoiceGroup(group); setInvoiceOpen(true); }}><Eye className="h-3.5 w-3.5" /></Button>
+                              <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" title="Delete" onClick={(e) => { e.stopPropagation(); handleDeleteGroup(group); }}><Trash2 className="h-3.5 w-3.5" /></Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Invoice Dialog */}
+          <Dialog open={invoiceOpen} onOpenChange={(v) => { setInvoiceOpen(v); if (!v) setInvoiceGroup(null); }}>
+            <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col overflow-hidden">
+              <DialogHeader>
+                <DialogTitle className="text-lg">Sale — {invoiceGroup?.customer_name}</DialogTitle>
+                <p className="text-sm text-muted-foreground">{invoiceGroup && formatDate(invoiceGroup.date)}{invoiceGroup?.reference && ` · Ref: ${invoiceGroup.reference}`}</p>
+              </DialogHeader>
+              {invoiceGroup && (
+                <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                  <div className="border rounded-lg overflow-hidden">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Customer</TableHead>
                           <TableHead>Product</TableHead>
-                          <TableHead className="text-right hidden md:table-cell">Qty</TableHead>
-                          <TableHead className="text-right hidden md:table-cell">Price</TableHead>
+                          <TableHead className="text-right">Qty</TableHead>
+                          <TableHead className="text-right">Price</TableHead>
                           <TableHead className="text-right">Total</TableHead>
-                          <TableHead className="hidden lg:table-cell">Comments</TableHead>
+                          <TableHead className="text-right hidden md:table-cell">VP</TableHead>
+                          <TableHead className="text-center">Status</TableHead>
+                          <TableHead className="text-center">Method</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {sales.map((sale) => (
-                          <TableRow key={sale.id}>
-                            <TableCell className="text-sm">{formatDate(sale.date)}</TableCell>
-                            <TableCell className="text-sm font-medium">{sale.customer_name}</TableCell>
-                            <TableCell className="text-sm max-w-[100px] truncate">{sale.product_name}</TableCell>
-                            <TableCell className="text-right text-sm hidden md:table-cell">{sale.quantity}</TableCell>
-                            <TableCell className="text-right text-sm hidden md:table-cell">{formatCurrency(sale.fixed_price)}</TableCell>
-                            <TableCell className="text-right text-sm font-medium">{formatCurrency(sale.fixed_price * sale.quantity)}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground max-w-[100px] truncate hidden lg:table-cell">{sale.comments ?? '-'}</TableCell>
+                        {invoiceGroup.items.map((s) => (
+                          <TableRow key={s.id}>
+                            <TableCell className="text-sm font-medium">{s.product_name}</TableCell>
+                            <TableCell className="text-right text-sm">{s.quantity}</TableCell>
+                            <TableCell className="text-right text-sm">{formatCurrency(s.fixed_price)}</TableCell>
+                            <TableCell className="text-right text-sm font-semibold">{formatCurrency(s.fixed_price * s.quantity)}</TableCell>
+                            <TableCell className="text-right text-sm hidden md:table-cell">
+                              {(s.volume_points ?? 0) > 0 ? <span className="text-purple-600">{((s.volume_points ?? 0) * s.quantity).toFixed(2)}</span> : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                            <TableCell className="text-center"><Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge></TableCell>
+                            <TableCell className="text-center text-sm text-muted-foreground capitalize">{s.payment_method ?? '—'}</TableCell>
                             <TableCell>
                               <div className="flex gap-1 justify-end">
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleEditSale(sale)}>
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteSale(sale.id)}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { handleEdit(s); setInvoiceOpen(false); }}><Pencil className="h-3 w-3" /></Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteItem(s.id)}><Trash2 className="h-3 w-3" /></Button>
                               </div>
                             </TableCell>
                           </TableRow>
@@ -692,144 +1015,107 @@ export default function CenterPage() {
                       </TableBody>
                     </Table>
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+
+                  <div className="bg-muted rounded-lg p-4 space-y-2 text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Total Amount</span><span className="font-semibold">{formatCurrency(invoiceGroup.totalAmount)}</span></div>
+                    {invoiceGroup.totalVP > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Volume Points</span><span className="text-purple-600 font-semibold">{invoiceGroup.totalVP.toFixed(2)} VP</span></div>}
+                    {invoiceGroup.pendingAmount > 0 && <div className="flex justify-between text-orange-500"><span>Pending Amount</span><span className="font-semibold">{formatCurrency(invoiceGroup.pendingAmount)}</span></div>}
+                  </div>
+
+                  {invoiceGroup.status !== 'done' && (
+                    <div className="border rounded-lg p-3 space-y-2">
+                      <p className="text-sm font-medium">{invoiceGroup.items.filter(s => s.payment_status === 'pending').length} item(s) pending — mark as paid:</p>
+                      <div className="flex gap-2">
+                        <Button size="sm" className="flex-1" onClick={() => handleMarkGroupPaid(invoiceGroup, 'online')}>Online</Button>
+                        <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkGroupPaid(invoiceGroup, 'cash')}>Cash</Button>
+                      </div>
+                    </div>
+                  )}
+                  {invoiceGroup.status === 'done' && <Badge variant="success" className="w-full justify-center py-2">All payments received</Badge>}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          {/* Edit Dialog */}
+          <Dialog open={editOpen} onOpenChange={(v) => { setEditOpen(v); if (!v) setEditSale(null); }}>
+            <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+              <DialogHeader><DialogTitle>Edit Product</DialogTitle></DialogHeader>
+              <form onSubmit={handleEditSubmit(onEditSubmit)} className="space-y-4 overflow-y-auto flex-1 pr-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Date</Label><Input type="date" {...regEdit('date')} /></div>
+                  <div className="space-y-2">
+                    <Label>Customer Name</Label>
+                    <Input {...regEdit('customer_name')} list="edit-cust" />
+                    <datalist id="edit-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                    {editErrors.customer_name && <p className="text-xs text-destructive">{editErrors.customer_name.message}</p>}
+                  </div>
+                </div>
+                <div className="space-y-2"><Label>Reference</Label><Input {...regEdit('reference')} /></div>
+                <div className="space-y-2">
+                  <Label>Product Name</Label>
+                  <Input {...regEdit('product_name')} list="edit-prod" />
+                  <datalist id="edit-prod">{[...menu.map(m => m.item_name), ...products.map(p => p.name)].map((n, i) => <option key={i} value={n} />)}</datalist>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>Quantity</Label><Input type="number" min={1} {...regEdit('quantity')} /></div>
+                  <div className="space-y-2"><Label>Volume Points</Label><Input type="number" step="0.01" {...regEdit('volume_points')} /></div>
+                </div>
+                <div className="space-y-2"><Label>Price (₹) per unit</Label><Input type="number" step="0.01" {...regEdit('fixed_price')} /></div>
+                <div className="space-y-2"><Label>Comments</Label><Textarea rows={2} {...regEdit('comments')} /></div>
+                <div className="flex gap-2 justify-end">
+                  <Button type="button" variant="outline" onClick={() => { setEditOpen(false); setEditSale(null); }}>Cancel</Button>
+                  <Button type="submit">Update</Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
         </>
       )}
 
       {/* ─── MEMBERSHIPS TAB ─── */}
       {activeTab === 'memberships' && (
         <>
-          {/* Stats — 4-column */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p>
-                <p className="text-xs text-muted-foreground">{membershipTodayEntries} paid membership{membershipTodayEntries !== 1 ? 's' : ''} today</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p>
-                <p className="text-xs text-muted-foreground">{membershipMonthEntries} paid this month · {memberships.filter(m => m.payment_status === 'pending').length} pending (₹{pendingAmount.toFixed(0)})</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{membershipShakesToday}</p>
-                <p className="text-xs text-muted-foreground">total shakes served</p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader>
-              <CardContent>
-                <p className="text-xl font-bold">{membershipShakesMonth}</p>
-                <p className="text-xs text-muted-foreground">total shakes served · {activeMembershipsCount} active</p>
-              </CardContent>
-            </Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p><p className="text-xs text-muted-foreground">{membershipTodayEntries} paid membership{membershipTodayEntries !== 1 ? 's' : ''} today</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p><p className="text-xs text-muted-foreground">{membershipMonthEntries} paid this month · {memberships.filter(m => m.payment_status === 'pending').length} pending (₹{membershipPendingAmount.toFixed(0)})</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesToday}</p><p className="text-xs text-muted-foreground">total shakes served</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesMonth}</p><p className="text-xs text-muted-foreground">total shakes served · {activeMembershipsCount} active</p></CardContent></Card>
           </div>
 
-          {/* Actions */}
           <div className="flex gap-2 flex-wrap">
             <Dialog open={addMembershipOpen} onOpenChange={(v) => { setAddMembershipOpen(v); if (!v) membershipForm.reset({ payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 }); }}>
-              <DialogTrigger asChild>
-                <Button className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  New Membership
-                </Button>
-              </DialogTrigger>
+              <DialogTrigger asChild><Button className="gap-2"><Plus className="h-4 w-4" />New Membership</Button></DialogTrigger>
               <DialogContent className="max-w-md">
-                <DialogHeader>
-                  <DialogTitle>Create Membership</DialogTitle>
-                </DialogHeader>
+                <DialogHeader><DialogTitle>Create Membership</DialogTitle></DialogHeader>
                 <form onSubmit={membershipForm.handleSubmit(onMembershipSubmit)} className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Customer Name</Label>
-                      <Input placeholder="Customer" {...membershipForm.register('customer_name')} list="membership-cust" />
-                      <datalist id="membership-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
-                      {membershipForm.formState.errors.customer_name && <p className="text-xs text-destructive">{membershipForm.formState.errors.customer_name.message}</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Reference (optional)</Label>
-                      <Input placeholder="Reference" {...membershipForm.register('reference')} />
-                    </div>
+                    <div className="space-y-2"><Label>Customer Name</Label><Input placeholder="Customer" {...membershipForm.register('customer_name')} list="membership-cust" /><datalist id="membership-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>{membershipForm.formState.errors.customer_name && <p className="text-xs text-destructive">{membershipForm.formState.errors.customer_name.message}</p>}</div>
+                    <div className="space-y-2"><Label>Reference (optional)</Label><Input placeholder="Reference" {...membershipForm.register('reference')} /></div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Total Shakes</Label>
-                      <Input type="number" min={1} {...membershipForm.register('total_shakes')} />
-                      {membershipForm.formState.errors.total_shakes && <p className="text-xs text-destructive">{membershipForm.formState.errors.total_shakes.message}</p>}
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Price (₹)</Label>
-                      <Input type="number" step="0.01" min={0} {...membershipForm.register('price')} />
-                      {membershipForm.formState.errors.price && <p className="text-xs text-destructive">{membershipForm.formState.errors.price.message}</p>}
-                    </div>
+                    <div className="space-y-2"><Label>Total Shakes</Label><Input type="number" min={1} {...membershipForm.register('total_shakes')} />{membershipForm.formState.errors.total_shakes && <p className="text-xs text-destructive">{membershipForm.formState.errors.total_shakes.message}</p>}</div>
+                    <div className="space-y-2"><Label>Price (₹)</Label><Input type="number" step="0.01" min={0} {...membershipForm.register('price')} />{membershipForm.formState.errors.price && <p className="text-xs text-destructive">{membershipForm.formState.errors.price.message}</p>}</div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Start Date</Label>
-                      <Input type="date" {...membershipForm.register('start_date')} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Payment Status</Label>
-                      <select
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        {...membershipForm.register('payment_status')}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="paid">Paid</option>
-                      </select>
-                    </div>
+                    <div className="space-y-2"><Label>Start Date</Label><Input type="date" {...membershipForm.register('start_date')} /></div>
+                    <div className="space-y-2"><Label>Payment Status</Label><select className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" {...membershipForm.register('payment_status')}><option value="pending">Pending</option><option value="paid">Paid</option></select></div>
                   </div>
-                  <div className="flex gap-2 justify-end">
-                    <Button type="button" variant="outline" onClick={() => setAddMembershipOpen(false)}>Cancel</Button>
-                    <Button type="submit">Create Membership</Button>
-                  </div>
+                  <div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={() => setAddMembershipOpen(false)}>Cancel</Button><Button type="submit">Create Membership</Button></div>
                 </form>
               </DialogContent>
             </Dialog>
 
             <Dialog open={membershipReportOpen} onOpenChange={setMembershipReportOpen}>
-              <DialogTrigger asChild>
-                <Button variant="outline" disabled={memberships.length === 0}>View Report</Button>
-              </DialogTrigger>
+              <DialogTrigger asChild><Button variant="outline" disabled={memberships.length === 0}>View Report</Button></DialogTrigger>
               <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <div className="flex items-center justify-between pr-8">
-                    <DialogTitle>Membership Report</DialogTitle>
-                    <Button variant="outline" size="sm" className="gap-2" onClick={printMembershipReport}>
-                      <Download className="h-4 w-4" />
-                      Download PDF
-                    </Button>
-                  </div>
-                </DialogHeader>
+                <DialogHeader><div className="flex items-center justify-between pr-8"><DialogTitle>Membership Report</DialogTitle><Button variant="outline" size="sm" className="gap-2" onClick={printMembershipReport}><Download className="h-4 w-4" />Download PDF</Button></div></DialogHeader>
                 <div className="overflow-x-auto">
                   <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Customer</TableHead>
-                        <TableHead>Reference</TableHead>
-                        <TableHead className="text-center">Total</TableHead>
-                        <TableHead className="text-center">Used</TableHead>
-                        <TableHead className="text-center">Left</TableHead>
-                        <TableHead className="text-right">Price</TableHead>
-                        <TableHead>Payment</TableHead>
-                        <TableHead>Start Date</TableHead>
-                        <TableHead>Visit Dates</TableHead>
-                      </TableRow>
-                    </TableHeader>
+                    <TableHeader><TableRow><TableHead>Customer</TableHead><TableHead>Reference</TableHead><TableHead className="text-center">Total</TableHead><TableHead className="text-center">Used</TableHead><TableHead className="text-center">Left</TableHead><TableHead className="text-right">Price</TableHead><TableHead>Payment</TableHead><TableHead>Start Date</TableHead><TableHead>Visit Dates</TableHead></TableRow></TableHeader>
                     <TableBody>
                       {memberships.map(m => {
-                        const visits = membershipVisits
-                          .filter(v => v.membership_id === m.id)
-                          .sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+                        const visits = membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
                         return (
                           <TableRow key={m.id}>
                             <TableCell className="font-medium">{m.customer_name}</TableCell>
@@ -838,282 +1124,129 @@ export default function CenterPage() {
                             <TableCell className="text-center">{visits.length}</TableCell>
                             <TableCell className="text-center">{m.total_shakes - visits.length}</TableCell>
                             <TableCell className="text-right">{formatCurrency(m.price)}</TableCell>
-                            <TableCell>
-                              <Badge variant={m.payment_status === 'paid' ? 'default' : 'secondary'}>
-                                {m.payment_status === 'paid' ? 'Paid' : 'Pending'}
-                              </Badge>
-                            </TableCell>
+                            <TableCell><Badge variant={m.payment_status === 'paid' ? 'default' : 'secondary'}>{m.payment_status === 'paid' ? 'Paid' : 'Pending'}</Badge></TableCell>
                             <TableCell className="text-sm">{formatDate(m.start_date)}</TableCell>
-                            <TableCell>
-                              {visits.length === 0 ? (
-                                <span className="text-muted-foreground text-sm">No visits</span>
-                              ) : (
-                                <div className="flex flex-wrap gap-1">
-                                  {visits.map(v => (
-                                    <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded">
-                                      {v.visit_date}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </TableCell>
+                            <TableCell>{visits.length === 0 ? <span className="text-muted-foreground text-sm">No visits</span> : <div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded">{v.visit_date}</span>)}</div>}</TableCell>
                           </TableRow>
                         );
                       })}
                     </TableBody>
                   </Table>
-                  {memberships.length === 0 && (
-                    <div className="text-center py-8 text-muted-foreground">No memberships yet.</div>
-                  )}
+                  {memberships.length === 0 && <div className="text-center py-8 text-muted-foreground">No memberships yet.</div>}
                 </div>
               </DialogContent>
             </Dialog>
 
-            <Button variant="outline" className="gap-2" onClick={printMembershipReport} disabled={memberships.length === 0}>
-              <Download className="h-4 w-4" />
-              Download PDF
-            </Button>
+            <Button variant="outline" className="gap-2" onClick={printMembershipReport} disabled={memberships.length === 0}><Download className="h-4 w-4" />Download PDF</Button>
 
             <Dialog open={resetOpen} onOpenChange={(v) => { setResetOpen(v); if (!v) setResetConfirmText(''); }}>
-              <DialogTrigger asChild>
-                <Button variant="outline" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={memberships.length === 0}>
-                  <RotateCcw className="h-4 w-4" />
-                  Reset
-                </Button>
-              </DialogTrigger>
+              <DialogTrigger asChild><Button variant="outline" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={memberships.length === 0}><RotateCcw className="h-4 w-4" />Reset</Button></DialogTrigger>
               <DialogContent className="max-w-sm">
-                <DialogHeader>
-                  <DialogTitle className="text-destructive">Reset All Memberships</DialogTitle>
-                </DialogHeader>
+                <DialogHeader><DialogTitle className="text-destructive">Reset All Memberships</DialogTitle></DialogHeader>
                 <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    This will permanently delete <strong>all {memberships.length} membership records</strong> and all visit history. This action cannot be undone.
-                  </p>
-                  <div className="space-y-2">
-                    <Label className="text-sm">Type <span className="font-mono font-bold">RESET</span> to confirm</Label>
-                    <Input
-                      placeholder="RESET"
-                      value={resetConfirmText}
-                      onChange={(e) => setResetConfirmText(e.target.value)}
-                      className="border-destructive/40 focus-visible:ring-destructive/30"
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Button variant="outline" className="flex-1" onClick={() => { setResetOpen(false); setResetConfirmText(''); }}>Cancel</Button>
-                    <Button variant="destructive" className="flex-1" disabled={resetConfirmText !== 'RESET'} onClick={handleResetAllMemberships}>
-                      Delete All
-                    </Button>
-                  </div>
+                  <p className="text-sm text-muted-foreground">This will permanently delete <strong>all {memberships.length} membership records</strong> and all visit history.</p>
+                  <div className="space-y-2"><Label className="text-sm">Type <span className="font-mono font-bold">RESET</span> to confirm</Label><Input placeholder="RESET" value={resetConfirmText} onChange={(e) => setResetConfirmText(e.target.value)} className="border-destructive/40 focus-visible:ring-destructive/30" /></div>
+                  <div className="flex gap-2"><Button variant="outline" className="flex-1" onClick={() => { setResetOpen(false); setResetConfirmText(''); }}>Cancel</Button><Button variant="destructive" className="flex-1" disabled={resetConfirmText !== 'RESET'} onClick={handleResetAllMemberships}>Delete All</Button></div>
                 </div>
               </DialogContent>
             </Dialog>
           </div>
 
-          {/* Customer search */}
           {memberships.length > 0 && (
             <div className="relative max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-              <Input
-                placeholder="Search customer..."
-                value={membershipSearch}
-                onChange={e => setMembershipSearch(e.target.value)}
-                className="pl-9"
-              />
+              <Input placeholder="Search customer..." value={membershipSearch} onChange={e => setMembershipSearch(e.target.value)} className="pl-9" />
             </div>
           )}
 
-          {/* Membership cards — grouped by customer */}
-          {loading ? (
-            <div className="text-center py-12 text-muted-foreground">Loading...</div>
-          ) : memberships.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
-              <Users className="h-12 w-12 mx-auto mb-4 opacity-30" />
-              <p>No memberships yet. Create one to get started.</p>
-            </div>
-          ) : filteredCustomerGroups.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground">
-              <p>No customers match &quot;{membershipSearch}&quot;</p>
-            </div>
-          ) : (
-            <div className="space-y-8">
-              {filteredCustomerGroups.map(group => (
-                <div key={group.name} className="space-y-3">
-                  {/* Customer header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <h3 className="font-semibold text-base">{group.name}</h3>
-                      <Badge variant={group.active.length > 0 ? 'default' : 'secondary'} className="text-xs">
-                        {group.active.length > 0 ? 'Active' : 'No active membership'}
-                      </Badge>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="gap-1.5 h-8 text-xs"
-                      onClick={() => handleRenewMembership(group.name)}
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      New Membership
-                    </Button>
-                  </div>
-
-                  {/* Active membership cards */}
-                  {group.active.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {group.active.map(({ membership: m, visits }) => {
-                        const used = visits.length;
-                        const selectedDate = visitDateMap[m.id] ?? today;
-                        const alreadyMarkedOnSelected = visits.some(v => v.visit_date === selectedDate);
-
-                        return (
-                          <Card key={m.id}>
-                            <CardHeader className="pb-3">
-                              <div className="flex items-start justify-between">
-                                <div>
-                                  {m.reference && <p className="text-xs text-muted-foreground">{m.reference}</p>}
-                                  <p className="text-xs text-muted-foreground mt-0.5">From {formatDate(m.start_date)}</p>
-                                </div>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteMembership(m.id)}>
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="text-xs text-muted-foreground font-medium">Shakes</span>
-                                  <span className="text-xs font-semibold">{used} / {m.total_shakes}</span>
-                                </div>
-                                <div className="flex flex-wrap gap-1.5">
-                                  {Array.from({ length: m.total_shakes }).map((_, i) => {
-                                    const visit = visits[i];
-                                    return visit ? (
-                                      <span key={i} title={`Visited: ${visit.visit_date}`} className="cursor-help">
-                                        <CheckCircle2 className="h-5 w-5 text-green-500" />
-                                      </span>
-                                    ) : (
-                                      <Circle key={i} className="h-5 w-5 text-muted-foreground/25" />
-                                    );
-                                  })}
-                                </div>
-                              </div>
-
-                              {visits.length > 0 && (
-                                <div>
-                                  <p className="text-xs text-muted-foreground mb-1.5">Visit dates</p>
-                                  <div className="flex flex-wrap gap-1">
-                                    {visits.map(v => (
-                                      <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 px-2 py-0.5 rounded-full">
-                                        {v.visit_date}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                              <div className="flex items-center justify-between pt-2 border-t">
-                                <div>
-                                  <p className="text-sm font-semibold">{formatCurrency(m.price)}</p>
-                                  <button
-                                    className={`text-xs mt-0.5 hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`}
-                                    onClick={() => handleTogglePayment(m)}
-                                  >
-                                    {m.payment_status === 'paid' ? '✓ Paid' : '⏳ Pending — tap to mark paid'}
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="flex gap-2 items-center">
-                                <Input
-                                  type="date"
-                                  className="h-8 text-sm flex-1"
-                                  value={selectedDate}
-                                  min={m.start_date}
-                                  onChange={e => setVisitDateMap(prev => ({ ...prev, [m.id]: e.target.value }))}
-                                />
-                                <Button
-                                  size="sm"
-                                  variant={alreadyMarkedOnSelected ? 'secondary' : 'default'}
-                                  disabled={alreadyMarkedOnSelected || !selectedDate}
-                                  onClick={() => handleMarkVisit(m, selectedDate)}
-                                  className="gap-1.5 shrink-0"
-                                >
-                                  <CheckCircle2 className="h-3.5 w-3.5" />
-                                  {alreadyMarkedOnSelected ? 'Already Marked' : 'Mark Visit'}
-                                </Button>
-                              </div>
-
-                              <div className="pt-2 border-t">
-                                {editingCommentId === m.id ? (
-                                  <div className="space-y-2">
-                                    <Textarea
-                                      className="text-sm min-h-[60px] resize-none"
-                                      placeholder="Add a note about this customer..."
-                                      value={commentDraft}
-                                      onChange={e => setCommentDraft(e.target.value)}
-                                      autoFocus
-                                    />
-                                    <div className="flex gap-2 justify-end">
-                                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingCommentId(null)}>Cancel</Button>
-                                      <Button size="sm" className="h-7 text-xs" onClick={() => handleSaveComment(m.id)}>Save</Button>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <button className="w-full text-left" onClick={() => { setEditingCommentId(m.id); setCommentDraft(m.comments ?? ''); }}>
-                                    {m.comments ? (
-                                      <p className="text-xs text-muted-foreground italic hover:text-foreground transition-colors">💬 {m.comments}</p>
-                                    ) : (
-                                      <p className="text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors">+ Add comment...</p>
-                                    )}
-                                  </button>
-                                )}
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Completed memberships — compact history */}
-                  {group.completed.length > 0 && (
-                    <div className="border rounded-lg overflow-hidden">
-                      <div className="px-4 py-2 bg-muted/50 text-xs font-medium text-muted-foreground">
-                        Past Memberships ({group.completed.length})
+          {loading ? <div className="text-center py-12 text-muted-foreground">Loading...</div>
+            : memberships.length === 0 ? <div className="text-center py-16 text-muted-foreground"><Users className="h-12 w-12 mx-auto mb-4 opacity-30" /><p>No memberships yet. Create one to get started.</p></div>
+            : filteredCustomerGroups.length === 0 ? <div className="text-center py-12 text-muted-foreground"><p>No customers match &quot;{membershipSearch}&quot;</p></div>
+            : (
+              <div className="space-y-8">
+                {filteredCustomerGroups.map(group => (
+                  <div key={group.name} className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-base">{group.name}</h3>
+                        <Badge variant={group.active.length > 0 ? 'default' : 'secondary'} className="text-xs">{group.active.length > 0 ? 'Active' : 'No active membership'}</Badge>
                       </div>
-                      {group.completed.map(({ membership: m, visits }) => (
-                        <div key={m.id} className="flex items-center justify-between px-4 py-2.5 border-t gap-3 flex-wrap">
-                          <div className="flex items-center gap-3 flex-wrap">
-                            <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                            <span className="text-xs text-muted-foreground">{formatDate(m.start_date)}</span>
-                            <span className="text-xs font-medium">{m.total_shakes} shakes</span>
-                            <Badge variant={m.payment_status === 'paid' ? 'default' : 'secondary'} className="text-xs h-5">
-                              {m.payment_status === 'paid' ? 'Paid' : 'Pending'}
-                            </Badge>
-                            {m.comments && (
-                              <span className="text-xs text-muted-foreground italic">💬 {m.comments}</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold">{formatCurrency(m.price)}</span>
-                            <button
-                              className={`text-xs hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`}
-                              onClick={() => handleTogglePayment(m)}
-                            >
-                              {m.payment_status === 'paid' ? '✓' : '⏳'}
-                            </button>
-                            <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => handleDeleteMembership(m.id)}>
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
+                      <Button size="sm" variant="outline" className="gap-1.5 h-8 text-xs" onClick={() => handleRenewMembership(group.name)}><Plus className="h-3.5 w-3.5" />New Membership</Button>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
+
+                    {group.active.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        {group.active.map(({ membership: m, visits }) => {
+                          const used = visits.length;
+                          const selectedDate = visitDateMap[m.id] ?? today;
+                          const alreadyMarked = visits.some(v => v.visit_date === selectedDate);
+                          return (
+                            <Card key={m.id}>
+                              <CardHeader className="pb-3">
+                                <div className="flex items-start justify-between">
+                                  <div>{m.reference && <p className="text-xs text-muted-foreground">{m.reference}</p>}<p className="text-xs text-muted-foreground mt-0.5">From {formatDate(m.start_date)}</p></div>
+                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteMembership(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                </div>
+                              </CardHeader>
+                              <CardContent className="space-y-3">
+                                <div>
+                                  <div className="flex items-center justify-between mb-2"><span className="text-xs text-muted-foreground font-medium">Shakes</span><span className="text-xs font-semibold">{used} / {m.total_shakes}</span></div>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {Array.from({ length: m.total_shakes }).map((_, i) => visits[i] ? <span key={i} title={`Visited: ${visits[i].visit_date}`} className="cursor-help"><CheckCircle2 className="h-5 w-5 text-green-500" /></span> : <Circle key={i} className="h-5 w-5 text-muted-foreground/25" />)}
+                                  </div>
+                                </div>
+                                {visits.length > 0 && <div><p className="text-xs text-muted-foreground mb-1.5">Visit dates</p><div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 px-2 py-0.5 rounded-full">{v.visit_date}</span>)}</div></div>}
+                                <div className="flex items-center justify-between pt-2 border-t">
+                                  <div><p className="text-sm font-semibold">{formatCurrency(m.price)}</p><button className={`text-xs mt-0.5 hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`} onClick={() => handleTogglePayment(m)}>{m.payment_status === 'paid' ? '✓ Paid' : '⏳ Pending — tap to mark paid'}</button></div>
+                                </div>
+                                <div className="flex gap-2 items-center">
+                                  <Input type="date" className="h-8 text-sm flex-1" value={selectedDate} min={m.start_date} onChange={e => setVisitDateMap(prev => ({ ...prev, [m.id]: e.target.value }))} />
+                                  <Button size="sm" variant={alreadyMarked ? 'secondary' : 'default'} disabled={alreadyMarked || !selectedDate} onClick={() => handleMarkVisit(m, selectedDate)} className="gap-1.5 shrink-0"><CheckCircle2 className="h-3.5 w-3.5" />{alreadyMarked ? 'Already Marked' : 'Mark Visit'}</Button>
+                                </div>
+                                <div className="pt-2 border-t">
+                                  {editingCommentId === m.id ? (
+                                    <div className="space-y-2">
+                                      <Textarea className="text-sm min-h-[60px] resize-none" placeholder="Add a note..." value={commentDraft} onChange={e => setCommentDraft(e.target.value)} autoFocus />
+                                      <div className="flex gap-2 justify-end"><Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditingCommentId(null)}>Cancel</Button><Button size="sm" className="h-7 text-xs" onClick={() => handleSaveComment(m.id)}>Save</Button></div>
+                                    </div>
+                                  ) : (
+                                    <button className="w-full text-left" onClick={() => { setEditingCommentId(m.id); setCommentDraft(m.comments ?? ''); }}>
+                                      {m.comments ? <p className="text-xs text-muted-foreground italic hover:text-foreground transition-colors">💬 {m.comments}</p> : <p className="text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors">+ Add comment...</p>}
+                                    </button>
+                                  )}
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {group.completed.length > 0 && (
+                      <div className="border rounded-lg overflow-hidden">
+                        <div className="px-4 py-2 bg-muted/50 text-xs font-medium text-muted-foreground">Past Memberships ({group.completed.length})</div>
+                        {group.completed.map(({ membership: m }) => (
+                          <div key={m.id} className="flex items-center justify-between px-4 py-2.5 border-t gap-3 flex-wrap">
+                            <div className="flex items-center gap-3 flex-wrap">
+                              <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                              <span className="text-xs text-muted-foreground">{formatDate(m.start_date)}</span>
+                              <span className="text-xs font-medium">{m.total_shakes} shakes</span>
+                              <Badge variant={m.payment_status === 'paid' ? 'default' : 'secondary'} className="text-xs h-5">{m.payment_status === 'paid' ? 'Paid' : 'Pending'}</Badge>
+                              {m.comments && <span className="text-xs text-muted-foreground italic">💬 {m.comments}</span>}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold">{formatCurrency(m.price)}</span>
+                              <button className={`text-xs hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`} onClick={() => handleTogglePayment(m)}>{m.payment_status === 'paid' ? '✓' : '⏳'}</button>
+                              <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => handleDeleteMembership(m.id)}><Trash2 className="h-3 w-3" /></Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
         </>
       )}
     </div>

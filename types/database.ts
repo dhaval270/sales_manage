@@ -195,6 +195,8 @@ export interface Database {
           fixed_price: number;
           volume_points: number;
           comments: string | null;
+          payment_status: 'pending' | 'done';
+          payment_method: 'online' | 'cash' | null;
           created_at: string;
         };
         Insert: {
@@ -208,6 +210,8 @@ export interface Database {
           fixed_price: number;
           volume_points?: number;
           comments?: string | null;
+          payment_status?: 'pending' | 'done';
+          payment_method?: 'online' | 'cash' | null;
           created_at?: string;
         };
         Update: {
@@ -221,6 +225,8 @@ export interface Database {
           fixed_price?: number;
           volume_points?: number;
           comments?: string | null;
+          payment_status?: 'pending' | 'done';
+          payment_method?: 'online' | 'cash' | null;
           created_at?: string;
         };
       };
