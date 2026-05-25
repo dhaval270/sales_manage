@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/utils';
 import type { Product } from '@/types/database';
-import { Search, Upload, Pencil, Check, X, Plus, Trash2 } from 'lucide-react';
+import { Search, Upload, Pencil, Check, X, Plus, Trash2, Wand2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 
@@ -29,6 +29,7 @@ export default function ProductsPage() {
   const [editVP, setEditVP] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editImageUrl, setEditImageUrl] = useState('');
+  const [editQty, setEditQty] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -38,8 +39,34 @@ export default function ProductsPage() {
   const [addPrice, setAddPrice] = useState('');
   const [addVP, setAddVP] = useState('');
   const [addCategory, setAddCategory] = useState('');
+  const [addQty, setAddQty] = useState('');
   const [addImageUrl, setAddImageUrl] = useState('');
   const [adding, setAdding] = useState(false);
+  const [fetchingAddImage, setFetchingAddImage] = useState(false);
+  const [fetchingEditImage, setFetchingEditImage] = useState(false);
+
+  const fetchProductImage = async (name: string, setter: (url: string) => void, setLoading: (v: boolean) => void) => {
+    if (!name.trim()) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/fetch-product-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.imageUrl) {
+        setter(data.imageUrl);
+        toast({ title: 'Image found', description: 'Image URL auto-filled from Herbalife.' });
+      } else {
+        toast({ title: 'Image not found', description: 'Could not find image automatically. Please enter URL manually.', variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Failed to fetch image.', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchProducts = async (uid: string) => {
     setLoading(true);
@@ -73,6 +100,7 @@ export default function ProductsPage() {
     setEditPrice(product.retail_price.toString());
     setEditVP(product.volume_points.toString());
     setEditCategory(product.category ?? '');
+    setEditQty(product.qty ?? '');
     setEditImageUrl(product.image_url ?? '');
   };
 
@@ -86,6 +114,7 @@ export default function ProductsPage() {
         retail_price: parseFloat(editPrice) || editProduct.retail_price,
         volume_points: parseFloat(editVP) || 0,
         category: editCategory || null,
+        qty: editQty.trim() || null,
         image_url: editImageUrl.trim() || null,
       })
       .eq('id', editProduct.id)
@@ -129,6 +158,7 @@ export default function ProductsPage() {
       retail_price: parseFloat(addPrice) || 0,
       volume_points: parseFloat(addVP) || 0,
       category: addCategory.trim() || null,
+      qty: addQty.trim() || null,
       image_url: addImageUrl.trim() || null,
     });
     setAdding(false);
@@ -137,7 +167,7 @@ export default function ProductsPage() {
     } else {
       toast({ title: 'Product added' });
       setAddOpen(false);
-      setAddName(''); setAddPrice(''); setAddVP(''); setAddCategory(''); setAddImageUrl('');
+      setAddName(''); setAddPrice(''); setAddVP(''); setAddCategory(''); setAddQty(''); setAddImageUrl('');
       fetchProducts(userId);
     }
   };
@@ -158,6 +188,7 @@ export default function ProductsPage() {
       user_id: userId,
       name: r.name,
       category: r.category || null,
+      qty: r.qty || null,
       retail_price: parseFloat(r.my_price) || 0,
       image_url: r.image_url || null,
       volume_points: parseFloat(r.volume_points) || 0,
@@ -229,7 +260,7 @@ export default function ProductsPage() {
               <p className="text-muted-foreground">No products yet. Use &quot;Add Product&quot; or &quot;Import CSV&quot; to get started.</p>
               <div className="inline-block text-left bg-muted rounded-md px-4 py-3">
                 <p className="text-xs text-muted-foreground mb-1 font-medium">CSV format:</p>
-                <code className="text-xs text-foreground">name, category, my_price, image_url, volume_points</code>
+                <code className="text-xs text-foreground">name, category, qty, my_price, image_url, volume_points</code>
               </div>
             </>
           ) : (
@@ -257,9 +288,12 @@ export default function ProductsPage() {
                 </button>
               </div>
               <CardContent className="p-4">
-                <p className="font-medium text-sm line-clamp-2 mb-2">{product.name}</p>
+                <p className="font-medium text-sm line-clamp-2 leading-snug">{product.name}</p>
+                {product.qty && (
+                  <p className="text-xs text-muted-foreground mt-1">Qty: {product.qty}</p>
+                )}
                 {product.category && (
-                  <Badge variant="secondary" className="mb-2 text-xs">{product.category}</Badge>
+                  <Badge variant="secondary" className="mt-2 text-xs">{product.category}</Badge>
                 )}
                 <div className="flex items-center justify-between mt-2">
                   <span className="font-bold text-primary" title="My Price">{formatCurrency(product.retail_price)}</span>
@@ -289,6 +323,7 @@ export default function ProductsPage() {
               <Input
                 value={addName}
                 onChange={(e) => setAddName(e.target.value)}
+                onBlur={() => { if (addName.trim() && !addImageUrl) fetchProductImage(addName, setAddImageUrl, setFetchingAddImage); }}
                 placeholder="e.g. Formula 1 Shake"
                 autoFocus
               />
@@ -326,12 +361,38 @@ export default function ProductsPage() {
               </datalist>
             </div>
             <div className="space-y-2">
-              <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Label>Qty <span className="text-muted-foreground text-xs">(optional)</span></Label>
               <Input
-                value={addImageUrl}
-                onChange={(e) => setAddImageUrl(e.target.value)}
-                placeholder="https://..."
+                value={addQty}
+                onChange={(e) => setAddQty(e.target.value)}
+                placeholder="e.g. 500g, 60 Tablets, 15 Sachets"
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <div className="flex gap-2">
+                <Input
+                  value={addImageUrl}
+                  onChange={(e) => setAddImageUrl(e.target.value)}
+                  placeholder="https://... or click Find"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  title="Auto-find image from Herbalife"
+                  disabled={fetchingAddImage || !addName.trim()}
+                  onClick={() => fetchProductImage(addName, setAddImageUrl, setFetchingAddImage)}
+                >
+                  {fetchingAddImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                </Button>
+              </div>
+              {addImageUrl && (
+                <div className="relative h-24 w-full rounded-md overflow-hidden border bg-muted">
+                  <Image src={addImageUrl} alt="Preview" fill className="object-contain" unoptimized />
+                </div>
+              )}
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setAddOpen(false)}>
@@ -391,12 +452,39 @@ export default function ProductsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Label>Qty <span className="text-muted-foreground text-xs">(optional)</span></Label>
                 <Input
-                  value={editImageUrl}
-                  onChange={(e) => setEditImageUrl(e.target.value)}
-                  placeholder="https://..."
+                  value={editQty}
+                  onChange={(e) => setEditQty(e.target.value)}
+                  placeholder="e.g. 500g, 60 Tablets, 15 Sachets"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Image URL <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <div className="flex gap-2">
+                  <Input
+                    value={editImageUrl}
+                    onChange={(e) => setEditImageUrl(e.target.value)}
+                    placeholder="https://... or click Find"
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    title="Auto-find image from Herbalife"
+                    disabled={fetchingEditImage || !editProduct?.name}
+                    onClick={() => fetchProductImage(editProduct!.name, setEditImageUrl, setFetchingEditImage)}
+                  >
+                    {fetchingEditImage ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                  </Button>
+                </div>
+                {editImageUrl && (
+                  <div className="relative h-24 w-full rounded-md overflow-hidden border bg-muted">
+                    <Image src={editImageUrl} alt="Preview" fill className="object-contain" unoptimized />
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2 justify-between">

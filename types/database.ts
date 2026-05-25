@@ -35,6 +35,7 @@ export interface Database {
           user_id: string;
           name: string;
           category: string | null;
+          qty: string | null;
           retail_price: number;
           image_url: string | null;
           source_url: string | null;
@@ -46,6 +47,7 @@ export interface Database {
           user_id: string;
           name: string;
           category?: string | null;
+          qty?: string | null;
           retail_price: number;
           image_url?: string | null;
           source_url?: string | null;
@@ -57,6 +59,7 @@ export interface Database {
           user_id?: string;
           name?: string;
           category?: string | null;
+          qty?: string | null;
           retail_price?: number;
           image_url?: string | null;
           source_url?: string | null;
