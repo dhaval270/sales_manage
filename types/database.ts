@@ -202,6 +202,7 @@ export interface Database {
           reference: string | null;
           product_name: string;
           quantity: number;
+          my_price: number;
           fixed_price: number;
           volume_points: number;
           comments: string | null;
@@ -218,6 +219,7 @@ export interface Database {
           reference?: string | null;
           product_name: string;
           quantity?: number;
+          my_price?: number;
           fixed_price: number;
           volume_points?: number;
           comments?: string | null;
@@ -234,6 +236,7 @@ export interface Database {
           reference?: string | null;
           product_name?: string;
           quantity?: number;
+          my_price?: number;
           fixed_price?: number;
           volume_points?: number;
           comments?: string | null;

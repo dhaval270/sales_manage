@@ -12,11 +12,11 @@ export default async function DashboardPage() {
   const now = new Date();
   const today = format(now, 'yyyy-MM-dd');
 
-  // Birthday window: 2 days ago → today (month-day only)
+  // Birthday window: today → 2 days ahead (month-day only)
   const birthdayWindow = [0, 1, 2].map((offset) => {
     const d = new Date(now);
-    d.setDate(d.getDate() - offset);
-    return { mmdd: format(d, 'MM-dd'), label: offset === 0 ? 'Today' : offset === 1 ? 'Yesterday' : '2 days ago' };
+    d.setDate(d.getDate() + offset);
+    return { mmdd: format(d, 'MM-dd'), label: offset === 0 ? 'Today' : offset === 1 ? 'Tomorrow' : 'In 2 days' };
   });
 
   const [
@@ -112,7 +112,7 @@ export default async function DashboardPage() {
           <div className="flex items-center gap-2 mb-3">
             <Cake className={`h-5 w-5 ${todayBirthdays.length > 0 ? 'text-pink-500' : 'text-orange-400'}`} />
             <p className={`font-semibold text-sm ${todayBirthdays.length > 0 ? 'text-pink-700 dark:text-pink-300' : 'text-orange-700 dark:text-orange-300'}`}>
-              {todayBirthdays.length > 0 ? `🎂 ${todayBirthdays.length} Birthday${todayBirthdays.length > 1 ? 's' : ''} Today!` : 'Recent Birthdays'}
+              {todayBirthdays.length > 0 ? `🎂 ${todayBirthdays.length} Birthday${todayBirthdays.length > 1 ? 's' : ''} Today!` : 'Upcoming Birthdays'}
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -124,7 +124,8 @@ export default async function DashboardPage() {
                 <div>
                   <p className="text-sm font-semibold leading-tight">{c.full_name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {c.isToday ? `Turns ${c.age} today` : `${c.label} · turned ${c.age}`}
+                    {c.isToday ? `Turns ${c.age} today` : `${c.label} · turns ${c.age}`}
+                    {' · '}{c.date_of_birth.slice(8, 10)}/{c.date_of_birth.slice(5, 7)}
                     {c.phone && <span> · {c.phone}</span>}
                   </p>
                 </div>

@@ -642,7 +642,21 @@ export default function SalesPage() {
 
     const { error } = await supabase.from('sales').insert(rows);
     if (error) { toast({ title: 'Add failed', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
+
+    // Auto-create customer if not already in the list
+    const exists = customers.some(c => c.full_name.toLowerCase() === data.customer_name.trim().toLowerCase());
+    if (!exists) {
+      await supabase.from('customers').insert({
+        user_id: user.id,
+        full_name: data.customer_name.trim(),
+        phone: custPhoneAdd.trim() || null,
+        status: 'active',
+      });
+      toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})`, description: `"${data.customer_name.trim()}" added as a new customer.` });
+    } else {
+      toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
+    }
+
     setAddOpen(false);
     resetAddForm();
     fetchData();

@@ -140,19 +140,75 @@ function numOrNull(v: string): number | null {
   return isNaN(n) ? null : n;
 }
 
-// ─── Print Report ─────────────────────────────────────────────────────────────
-function printCustomerReport(customer: Customer, data: ReportData, managerName: string) {
-  const visitsByMembership = data.membershipVisits.reduce((map, v) => {
-    if (!map.has(v.membership_id)) map.set(v.membership_id, []);
-    map.get(v.membership_id)!.push(v.visit_date);
-    return map;
-  }, new Map<number, string[]>());
+// ─── Shared print helpers ─────────────────────────────────────────────────────
+const PRINT_BASE_STYLES = `
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px}
+  h1{font-size:22px;margin-bottom:2px}
+  h2{font-size:14px;margin:24px 0 10px;color:#444;border-bottom:1px solid #e5e7eb;padding-bottom:6px}
+  .sub{color:#666;font-size:12px;margin-bottom:20px}
+  .meta{display:flex;justify-content:space-between;margin-bottom:20px;font-size:12px}
+  .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .badge{padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid}
+  .badge.active{background:#dcfce7;color:#16a34a;border-color:#86efac}
+  .badge.inactive{background:#f3f4f6;color:#6b7280;border-color:#d1d5db}
+  .badge.blue{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
+  .badge.purple{background:#f3e8ff;color:#7c3aed;border-color:#c4b5fd}
+  .health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .health-item{background:#f9fafb;border-radius:6px;padding:8px 10px}
+  .health-item .hl{font-size:10px;color:#888;margin-bottom:2px}
+  .health-item .hv{font-size:13px;font-weight:600}
+  table{width:100%;border-collapse:collapse;margin-bottom:8px}
+  th{background:#f4f4f4;text-align:left;padding:7px 10px;font-size:11px;border-bottom:2px solid #ddd}
+  td{padding:7px 10px;border-bottom:1px solid #eee;font-size:12px}
+  .num{text-align:right}
+  .status{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
+  .status.paid{background:#dcfce7;color:#16a34a}
+  .status.pending{background:#fef9c3;color:#854d0e}
+  .empty{color:#999;font-size:12px;padding:10px 0}
+  .footer{margin-top:40px;font-size:11px;color:#999;text-align:center;border-top:1px solid #eee;padding-top:16px}
+  .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;font-size:12px;color:#555}
+  .scard{border:1px solid #e5e7eb;border-radius:8px;padding:12px}
+  .scard .label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+  .scard .value{font-size:18px;font-weight:700}
+  .summary{display:grid;gap:12px;margin-bottom:24px}
+  @media print{button{display:none}}
+`;
 
-  const totalSalesSpent = data.sales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
-  const totalSalesVP = data.sales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
-  const totalCenterSpent = data.centerSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
-  const totalMembershipSpent = data.memberships.reduce((a, m) => a + m.price, 0);
+function buildCustomerHeader(customer: Customer, managerName: string) {
+  return `
+  <h1>Customer Report</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>${customer.full_name}</strong>${customer.phone ? ' &nbsp;·&nbsp; ' + customer.phone : ''}<br/>
+      ${customer.date_of_birth ? 'DOB: ' + customer.date_of_birth + ' &nbsp;·&nbsp; ' : ''}
+      ${customer.gender ? customer.gender + ' &nbsp;·&nbsp; ' : ''}
+      ${customer.health_problem ? 'Health: ' + customer.health_problem : ''}
+    </div>
+    <div style="text-align:right">
+      <strong>Manager:</strong> ${managerName}<br/>
+      <strong>Generated:</strong> ${new Date().toLocaleString()}
+    </div>
+  </div>
+  <div class="badges">
+    <span class="badge ${customer.status === 'active' ? 'active' : 'inactive'}">${customer.status}</span>
+    ${customer.is_daily_shake_member ? '<span class="badge blue">Shake Member</span>' : ''}
+    ${customer.is_distributor ? '<span class="badge purple">Distributor</span>' : ''}
+    ${customer.referred_by ? `<span class="badge" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0">Ref: ${customer.referred_by}</span>` : ''}
+  </div>`;
+}
 
+function openPrintWindow(title: string, body: string) {
+  const html = `<!DOCTYPE html><html>
+<head><meta charset="utf-8"/><title>${title}</title><style>${PRINT_BASE_STYLES}</style></head>
+<body>${body}<script>window.onload=()=>{window.print();}<\/script></body></html>`;
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+}
+
+// ─── Print: Health Readings Report ───────────────────────────────────────────
+function printHealthReport(customer: Customer, data: ReportData, managerName: string) {
   const healthReadingsHtml = data.healthReadings.length > 0
     ? data.healthReadings.map((r, i) => {
         const rows = [
@@ -176,7 +232,29 @@ function printCustomerReport(customer: Customer, data: ReportData, managerName: 
       }).join('')
     : '<p class="empty">No health readings recorded.</p>';
 
+  openPrintWindow(`Health Report — ${customer.full_name}`, `
+    ${buildCustomerHeader(customer, managerName)}
+    <h2>Health Readings (${data.healthReadings.length})</h2>
+    ${healthReadingsHtml}
+    ${customer.notes ? `<h2>Notes</h2><div class="notes-box">${customer.notes}</div>` : ''}
+    <div class="footer">Herbalife Sales Manager &nbsp;·&nbsp; Health Report &nbsp;·&nbsp; ${customer.full_name} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</div>
+  `);
+}
+
+// ─── Print: History Report (Sales + Center + Memberships) ────────────────────
+function printHistoryReport(customer: Customer, data: ReportData, managerName: string) {
+  const visitsByMembership = data.membershipVisits.reduce((map, v) => {
+    if (!map.has(v.membership_id)) map.set(v.membership_id, []);
+    map.get(v.membership_id)!.push(v.visit_date);
+    return map;
+  }, new Map<number, string[]>());
+
+  const totalSalesSpent = data.sales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const totalSalesVP = data.sales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+  const totalCenterSpent = data.centerSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalMembershipSpent = data.memberships.reduce((a, m) => a + m.price, 0);
   const totalProfit = data.sales.filter(s => s.payment_status === 'done').reduce((a, s) => a + (s.profit ?? 0) * s.quantity, 0);
+
   const salesRowsHtml = data.sales.map(s => {
     const isPaid = s.payment_status === 'done';
     const profitCell = isPaid
@@ -184,8 +262,7 @@ function printCustomerReport(customer: Customer, data: ReportData, managerName: 
       : `<td class="num" style="color:#9ca3af">—</td>`;
     return `
     <tr>
-      <td>${s.date}</td>
-      <td>${s.product_name}</td>
+      <td>${s.date}</td><td>${s.product_name}</td>
       <td class="num">${s.quantity}</td>
       <td class="num">₹${s.my_price.toFixed(2)}</td>
       <td class="num">₹${s.retail_price.toFixed(2)}</td>
@@ -226,106 +303,39 @@ function printCustomerReport(customer: Customer, data: ReportData, managerName: 
     </tr>`;
   }).join('');
 
-  const html = `<!DOCTYPE html><html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Customer Report — ${customer.full_name}</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px}
-    h1{font-size:22px;margin-bottom:2px}
-    h2{font-size:14px;margin:24px 0 10px;color:#444;border-bottom:1px solid #e5e7eb;padding-bottom:6px}
-    .sub{color:#666;font-size:12px;margin-bottom:20px}
-    .meta{display:flex;justify-content:space-between;margin-bottom:20px;font-size:12px}
-    .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
-    .badge{padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;border:1px solid}
-    .badge.active{background:#dcfce7;color:#16a34a;border-color:#86efac}
-    .badge.inactive{background:#f3f4f6;color:#6b7280;border-color:#d1d5db}
-    .badge.blue{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
-    .badge.purple{background:#f3e8ff;color:#7c3aed;border-color:#c4b5fd}
-    .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:24px}
-    .scard{border:1px solid #e5e7eb;border-radius:8px;padding:12px}
-    .scard .label{font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
-    .scard .value{font-size:18px;font-weight:700}
-    .health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-    .health-item{background:#f9fafb;border-radius:6px;padding:8px 10px}
-    .health-item .hl{font-size:10px;color:#888;margin-bottom:2px}
-    .health-item .hv{font-size:13px;font-weight:600}
-    table{width:100%;border-collapse:collapse;margin-bottom:8px}
-    th{background:#f4f4f4;text-align:left;padding:7px 10px;font-size:11px;border-bottom:2px solid #ddd}
-    td{padding:7px 10px;border-bottom:1px solid #eee;font-size:12px}
-    .num{text-align:right}
-    .status{padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600}
-    .status.paid{background:#dcfce7;color:#16a34a}
-    .status.pending{background:#fef9c3;color:#854d0e}
-    .empty{color:#999;font-size:12px;padding:10px 0}
-    .footer{margin-top:40px;font-size:11px;color:#999;text-align:center;border-top:1px solid #eee;padding-top:16px}
-    .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px;font-size:12px;color:#555}
-    @media print{button{display:none}}
-  </style>
-</head>
-<body>
-  <h1>Customer Report</h1>
-  <p class="sub">Herbalife Sales Manager</p>
-  <div class="meta">
-    <div>
-      <strong>${customer.full_name}</strong>${customer.phone ? ' &nbsp;·&nbsp; ' + customer.phone : ''}<br/>
-      ${customer.date_of_birth ? 'DOB: ' + customer.date_of_birth + ' &nbsp;·&nbsp; ' : ''}
-      ${customer.gender ? customer.gender + ' &nbsp;·&nbsp; ' : ''}
-      ${customer.health_problem ? 'Health: ' + customer.health_problem : ''}
+  openPrintWindow(`History Report — ${customer.full_name}`, `
+    ${buildCustomerHeader(customer, managerName)}
+    <div class="summary" style="grid-template-columns:repeat(4,1fr)">
+      <div class="scard"><div class="label">Sales Records</div><div class="value">${data.sales.length}</div></div>
+      <div class="scard"><div class="label">Sales Spent</div><div class="value" style="color:#be123c">₹${totalSalesSpent.toFixed(2)}</div></div>
+      <div class="scard"><div class="label">Center Records</div><div class="value" style="color:#b45309">${data.centerSales.length}</div></div>
+      <div class="scard"><div class="label">Memberships</div><div class="value" style="color:#1d4ed8">${data.memberships.length}</div></div>
     </div>
-    <div style="text-align:right">
-      <strong>Manager:</strong> ${managerName}<br/>
-      <strong>Generated:</strong> ${new Date().toLocaleString()}
-    </div>
-  </div>
 
-  <div class="badges">
-    <span class="badge ${customer.status === 'active' ? 'active' : 'inactive'}">${customer.status}</span>
-    ${customer.is_daily_shake_member ? '<span class="badge blue">Shake Member</span>' : ''}
-    ${customer.is_distributor ? '<span class="badge purple">Distributor</span>' : ''}
-    ${customer.referred_by ? `<span class="badge" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0">Ref: ${customer.referred_by}</span>` : ''}
-  </div>
+    <h2>Sales History (${data.sales.length} records · Retail ₹${totalSalesSpent.toFixed(2)} · Profit ₹${totalProfit.toFixed(2)} paid only · ${totalSalesVP.toFixed(2)} VP)</h2>
+    ${data.sales.length > 0 ? `
+    <table>
+      <thead><tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">My Price</th><th class="num">Retail Price</th><th class="num">Total My</th><th class="num">Total Retail</th><th class="num">Profit</th><th class="num">VP</th><th>Status</th><th>Method</th></tr></thead>
+      <tbody>${salesRowsHtml}</tbody>
+    </table>` : '<p class="empty">No sales records found.</p>'}
 
-  <div class="summary">
-    <div class="scard"><div class="label">Sales Purchases</div><div class="value">${data.sales.length}</div></div>
-    <div class="scard"><div class="label">Sales Spent</div><div class="value" style="color:#be123c">₹${totalSalesSpent.toFixed(2)}</div></div>
-    <div class="scard"><div class="label">Center Visits</div><div class="value" style="color:#b45309">${data.centerSales.length}</div></div>
-    <div class="scard"><div class="label">Memberships</div><div class="value" style="color:#1d4ed8">${data.memberships.length}</div></div>
-  </div>
+    <h2>Center Sales History (${data.centerSales.length} records · Total ₹${totalCenterSpent.toFixed(2)})</h2>
+    ${data.centerSales.length > 0 ? `
+    <table>
+      <thead><tr><th>Date</th><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th><th>Payment</th></tr></thead>
+      <tbody>${centerRowsHtml}</tbody>
+    </table>` : '<p class="empty">No center sales records found.</p>'}
 
-  <h2>Health Readings (${data.healthReadings.length})</h2>
-  ${healthReadingsHtml}
+    <h2>Memberships (${data.memberships.length} plans · Total ₹${totalMembershipSpent.toFixed(2)})</h2>
+    ${data.memberships.length > 0 ? `
+    <table>
+      <thead><tr><th>Start Date</th><th class="num">Total</th><th class="num">Used</th><th class="num">Left</th><th class="num">Price</th><th>Reference</th><th>Payment</th><th>Visit Dates</th></tr></thead>
+      <tbody>${memRowsHtml}</tbody>
+    </table>` : '<p class="empty">No memberships found.</p>'}
 
-  <h2>Sales History (${data.sales.length} records · Retail ₹${totalSalesSpent.toFixed(2)} · Profit ₹${totalProfit.toFixed(2)} (paid only) · ${totalSalesVP.toFixed(2)} VP)</h2>
-  ${data.sales.length > 0 ? `
-  <table>
-    <thead><tr><th>Date</th><th>Product</th><th class="num">Qty</th><th class="num">My Price</th><th class="num">Retail Price</th><th class="num">Total My</th><th class="num">Total Retail</th><th class="num">Profit</th><th class="num">VP</th><th>Status</th><th>Method</th></tr></thead>
-    <tbody>${salesRowsHtml}</tbody>
-  </table>` : '<p class="empty">No sales records found.</p>'}
-
-  <h2>Center Sales History (${data.centerSales.length} records · Total ₹${totalCenterSpent.toFixed(2)})</h2>
-  ${data.centerSales.length > 0 ? `
-  <table>
-    <thead><tr><th>Date</th><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Total</th><th>Payment</th></tr></thead>
-    <tbody>${centerRowsHtml}</tbody>
-  </table>` : '<p class="empty">No center sales records found.</p>'}
-
-  <h2>Memberships (${data.memberships.length} plans · Total ₹${totalMembershipSpent.toFixed(2)})</h2>
-  ${data.memberships.length > 0 ? `
-  <table>
-    <thead><tr><th>Start Date</th><th class="num">Total</th><th class="num">Used</th><th class="num">Left</th><th class="num">Price</th><th>Reference</th><th>Payment</th><th>Visit Dates</th></tr></thead>
-    <tbody>${memRowsHtml}</tbody>
-  </table>` : '<p class="empty">No memberships found.</p>'}
-
-  ${customer.notes ? `<h2>Notes</h2><div class="notes-box">${customer.notes}</div>` : ''}
-
-  <div class="footer">Herbalife Sales Manager &nbsp;·&nbsp; Customer Report &nbsp;·&nbsp; ${customer.full_name} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</div>
-  <script>window.onload=()=>{window.print();}<\/script>
-</body></html>`;
-
-  const win = window.open('', '_blank');
-  if (win) { win.document.write(html); win.document.close(); }
+    ${customer.notes ? `<h2>Notes</h2><div class="notes-box">${customer.notes}</div>` : ''}
+    <div class="footer">Herbalife Sales Manager &nbsp;·&nbsp; History Report &nbsp;·&nbsp; ${customer.full_name} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</div>
+  `);
 }
 
 // ─── Health Reading Card ──────────────────────────────────────────────────────
@@ -784,13 +794,22 @@ export default function CustomersPage() {
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={reportLoading}
+                    onClick={() => printHealthReport(reportCustomer, reportData, managerName)}
+                  >
+                    <Download className="h-3.5 w-3.5" />Health Report
+                  </Button>
+                  <Button
                     variant="default"
                     size="sm"
                     className="gap-1.5"
                     disabled={reportLoading}
-                    onClick={() => printCustomerReport(reportCustomer, reportData, managerName)}
+                    onClick={() => printHistoryReport(reportCustomer, reportData, managerName)}
                   >
-                    <Download className="h-3.5 w-3.5" />Download PDF
+                    <Download className="h-3.5 w-3.5" />History Report
                   </Button>
                   <Button
                     variant="ghost"

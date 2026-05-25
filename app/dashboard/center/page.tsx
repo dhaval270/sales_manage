@@ -24,6 +24,7 @@ import { format, startOfMonth, endOfMonth } from 'date-fns';
 const lineItemSchema = z.object({
   product_name: z.string().min(1, 'Product required'),
   quantity: z.coerce.number().min(1, 'Min 1'),
+  my_price: z.coerce.number().min(0),
   fixed_price: z.coerce.number().min(0),
   volume_points: z.coerce.number().optional(),
   comments: z.string().optional(),
@@ -57,7 +58,7 @@ type SaleForm = z.infer<typeof saleSchema>;
 type MenuForm = z.infer<typeof menuSchema>;
 type MembershipForm = z.infer<typeof membershipSchema>;
 
-const emptyItem = { product_name: '', quantity: 1, fixed_price: 0, volume_points: 0, comments: '' };
+const emptyItem = { product_name: '', quantity: 1, my_price: 0, fixed_price: 0, volume_points: 0, comments: '' };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -70,6 +71,8 @@ type CenterSaleGroup = {
   items: CenterSale[];
   totalQty: number;
   totalAmount: number;
+  totalMyAmount: number;
+  totalProfit: number;
   totalVP: number;
   pendingAmount: number;
   status: 'done' | 'pending' | 'mixed';
@@ -81,14 +84,16 @@ function groupCenterSales(sales: CenterSale[]): CenterSaleGroup[] {
   for (const s of sales) {
     const key = `${s.date}|${s.customer_name}|${s.reference ?? ''}`;
     if (!map.has(key)) {
-      map.set(key, { key, date: s.date, customer_name: s.customer_name, customer_phone: s.customer_phone ?? null, reference: s.reference, items: [], totalQty: 0, totalAmount: 0, totalVP: 0, pendingAmount: 0, status: 'done', allIds: [] });
+      map.set(key, { key, date: s.date, customer_name: s.customer_name, customer_phone: s.customer_phone ?? null, reference: s.reference, items: [], totalQty: 0, totalAmount: 0, totalMyAmount: 0, totalProfit: 0, totalVP: 0, pendingAmount: 0, status: 'done', allIds: [] });
     }
     const g = map.get(key)!;
     g.items.push(s);
     g.allIds.push(s.id);
     g.totalQty += s.quantity;
     g.totalAmount += s.fixed_price * s.quantity;
+    g.totalMyAmount += (s.my_price ?? 0) * s.quantity;
     g.totalVP += (s.volume_points ?? 0) * s.quantity;
+    if (s.payment_status === 'done') g.totalProfit += (s.fixed_price - (s.my_price ?? 0)) * s.quantity;
     if (s.payment_status === 'pending') g.pendingAmount += s.fixed_price * s.quantity;
   }
   Array.from(map.values()).forEach((g) => {
@@ -277,6 +282,7 @@ export default function CenterPage() {
     reference: z.string().optional(),
     product_name: z.string().min(1),
     quantity: z.coerce.number().min(1),
+    my_price: z.coerce.number().min(0),
     fixed_price: z.coerce.number().min(0),
     volume_points: z.coerce.number().optional(),
     comments: z.string().optional(),
@@ -329,10 +335,11 @@ export default function CenterPage() {
 
   // Summary totals
   const totalRevenue = filteredSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
-  const totalCashAmount = filteredSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
-  const totalOnlineAmount = filteredSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
+  const totalCashAmount = filteredSales.filter((s) => s.payment_method === 'cash' && s.payment_status === 'done').reduce((a, s) => a + (s.fixed_price - (s.my_price ?? 0)) * s.quantity, 0);
+  const totalOnlineAmount = filteredSales.filter((s) => s.payment_method === 'online' && s.payment_status === 'done').reduce((a, s) => a + (s.fixed_price - (s.my_price ?? 0)) * s.quantity, 0);
   const totalPendingAmount = filteredSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
   const totalVolumePoints = filteredSales.reduce((a, s) => a + (s.volume_points ?? 0) * s.quantity, 0);
+  const totalProfit = filteredSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + (s.fixed_price - (s.my_price ?? 0)) * s.quantity, 0);
 
   // Today / monthly stats
   const todaySales = sales.filter((s) => s.date === today);
@@ -376,9 +383,10 @@ export default function CenterPage() {
     return { menuMatches, productMatches };
   };
 
-  const handleLineProductSelect = (index: number, name: string, price: number, vp?: number) => {
+  const handleLineProductSelect = (index: number, name: string, price: number, vp?: number, myPrice?: number) => {
     setValue(`items.${index}.product_name`, name);
     setValue(`items.${index}.fixed_price`, price);
+    setValue(`items.${index}.my_price`, myPrice ?? 0);
     if (vp !== undefined) setValue(`items.${index}.volume_points`, vp);
     const s = [...productSearches];
     s[index] = name;
@@ -411,6 +419,7 @@ export default function CenterPage() {
       reference: data.reference || null,
       product_name: item.product_name,
       quantity: item.quantity,
+      my_price: item.my_price || 0,
       fixed_price: item.fixed_price,
       volume_points: item.volume_points || 0,
       comments: item.comments || null,
@@ -419,7 +428,21 @@ export default function CenterPage() {
     }));
     const { error } = await supabase.from('center_sales').insert(rows);
     if (error) { toast({ title: 'Add failed', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
+
+    // Auto-create customer if not already in the list
+    const exists = customers.some(c => c.full_name.toLowerCase() === data.customer_name.trim().toLowerCase());
+    if (!exists) {
+      await supabase.from('customers').insert({
+        user_id: user.id,
+        full_name: data.customer_name.trim(),
+        phone: custPhoneAdd.trim() || null,
+        status: 'active',
+      });
+      toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})`, description: `"${data.customer_name.trim()}" added as a new customer.` });
+    } else {
+      toast({ title: `Sale added (${rows.length} product${rows.length > 1 ? 's' : ''})` });
+    }
+
     setAddOpen(false);
     resetAddForm();
     fetchData();
@@ -431,7 +454,7 @@ export default function CenterPage() {
     const { error } = await supabase.from('center_sales').update({
       date: data.date, customer_name: data.customer_name, customer_phone: custPhoneEdit.trim() || null,
       reference: data.reference || null, product_name: data.product_name, quantity: data.quantity,
-      fixed_price: data.fixed_price, volume_points: data.volume_points || 0, comments: data.comments || null,
+      my_price: data.my_price || 0, fixed_price: data.fixed_price, volume_points: data.volume_points || 0, comments: data.comments || null,
     }).eq('id', editSale.id);
     if (error) { toast({ title: 'Update failed', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'Sale updated' });
@@ -448,7 +471,7 @@ export default function CenterPage() {
 
   const handleEdit = (sale: CenterSale) => {
     setEditSale(sale);
-    resetEdit({ date: sale.date, customer_name: sale.customer_name, reference: sale.reference ?? '', product_name: sale.product_name, quantity: sale.quantity, fixed_price: sale.fixed_price, volume_points: sale.volume_points, comments: sale.comments ?? '' });
+    resetEdit({ date: sale.date, customer_name: sale.customer_name, reference: sale.reference ?? '', product_name: sale.product_name, quantity: sale.quantity, my_price: sale.my_price ?? 0, fixed_price: sale.fixed_price, volume_points: sale.volume_points, comments: sale.comments ?? '' });
     setCustPhoneEdit(sale.customer_phone ?? '');
     setCustDropdownEdit(false);
     setEditOpen(true);
@@ -815,6 +838,9 @@ export default function CenterPage() {
                         const { menuMatches, productMatches } = getFilteredSuggestions(productSearches[index] || '');
                         const hasDropdown = openDropdownIndex === index && (productSearches[index] || '').length > 0 && (menuMatches.length > 0 || productMatches.length > 0);
 
+                        const myPrice = watchItems?.[index]?.my_price || 0;
+                        const lineProfit = (price - myPrice) * qty;
+
                         return (
                           <div key={field.id} className="border rounded-lg p-3 space-y-3 bg-muted/30">
                             <div className="flex items-center justify-between">
@@ -851,7 +877,7 @@ export default function CenterPage() {
                                   {productMatches.length > 0 && (<>
                                     <div className="px-3 py-1 text-xs text-muted-foreground font-medium bg-muted/50">Products</div>
                                     {productMatches.map(p => (
-                                      <button key={`p-${p.id}`} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm" onClick={() => handleLineProductSelect(index, p.name, p.retail_price, p.volume_points)}>
+                                      <button key={`p-${p.id}`} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm" onClick={() => handleLineProductSelect(index, p.name, p.retail_price, p.volume_points, p.retail_price)}>
                                         <div className="font-medium">{p.name}</div>
                                         <div className="text-xs text-muted-foreground">{formatCurrency(p.retail_price)}</div>
                                       </button>
@@ -866,14 +892,21 @@ export default function CenterPage() {
                               <div className="space-y-1"><Label className="text-xs">Quantity</Label><Input type="number" min={1} className="bg-background" {...register(`items.${index}.quantity`)} /></div>
                               <div className="space-y-1"><Label className="text-xs">Volume Points</Label><Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.volume_points`)} /></div>
                             </div>
-                            <div className="space-y-1">
-                              <Label className="text-xs">Price (₹) <span className="text-muted-foreground">per unit</span></Label>
-                              <Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.fixed_price`)} />
+                            <div className="grid grid-cols-2 gap-3">
+                              <div className="space-y-1">
+                                <Label className="text-xs">My Price (₹) <span className="text-muted-foreground">per unit</span></Label>
+                                <Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.my_price`)} />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Selling Price (₹) <span className="text-muted-foreground">per unit</span></Label>
+                                <Input type="number" step="0.01" className="bg-background" {...register(`items.${index}.fixed_price`)} />
+                              </div>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
-                              <div><p className="text-muted-foreground">Qty × Price</p><p className="font-semibold">{qty} × {formatCurrency(price)}</p></div>
-                              <div><p className="text-muted-foreground">Total</p><p className="font-semibold text-primary">{formatCurrency(price * qty)}</p></div>
+                            <div className="grid grid-cols-3 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
+                              <div><p className="text-muted-foreground">My Total</p><p className="font-semibold">{formatCurrency(myPrice * qty)}</p></div>
+                              <div><p className="text-muted-foreground">Selling Total</p><p className="font-semibold">{formatCurrency(price * qty)}</p></div>
+                              <div><p className="text-muted-foreground">Profit</p><p className={`font-semibold ${lineProfit >= 0 ? 'text-green-600' : 'text-destructive'}`}>{formatCurrency(lineProfit)}</p></div>
                             </div>
 
                             <div className="space-y-1"><Label className="text-xs">Comments (optional)</Label><Input placeholder="Notes..." className="bg-background" {...register(`items.${index}.comments`)} /></div>
@@ -936,10 +969,11 @@ export default function CenterPage() {
           </Card>
 
           {/* Summary cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Received</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Received</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-600">{formatCurrency(totalProfit)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Amount</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-orange-500">{formatCurrency(totalPendingAmount)}</p></CardContent></Card>
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
           </div>
@@ -1036,8 +1070,10 @@ export default function CenterPage() {
                         <TableRow>
                           <TableHead>Product</TableHead>
                           <TableHead className="text-right">Qty</TableHead>
-                          <TableHead className="text-right">Price</TableHead>
+                          <TableHead className="text-right hidden md:table-cell">My Price</TableHead>
+                          <TableHead className="text-right">Selling Price</TableHead>
                           <TableHead className="text-right">Total</TableHead>
+                          <TableHead className="text-right hidden md:table-cell">Profit</TableHead>
                           <TableHead className="text-right hidden md:table-cell">VP</TableHead>
                           <TableHead className="text-center">Status</TableHead>
                           <TableHead className="text-center">Method</TableHead>
@@ -1049,8 +1085,14 @@ export default function CenterPage() {
                           <TableRow key={s.id}>
                             <TableCell className="text-sm font-medium">{s.product_name}</TableCell>
                             <TableCell className="text-right text-sm">{s.quantity}</TableCell>
+                            <TableCell className="text-right text-sm hidden md:table-cell text-muted-foreground">{formatCurrency(s.my_price ?? 0)}</TableCell>
                             <TableCell className="text-right text-sm">{formatCurrency(s.fixed_price)}</TableCell>
                             <TableCell className="text-right text-sm font-semibold">{formatCurrency(s.fixed_price * s.quantity)}</TableCell>
+                            <TableCell className="text-right text-sm font-semibold hidden md:table-cell">
+                              {s.payment_status === 'done'
+                                ? <span className="text-green-600">{formatCurrency((s.fixed_price - (s.my_price ?? 0)) * s.quantity)}</span>
+                                : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
                             <TableCell className="text-right text-sm hidden md:table-cell">
                               {(s.volume_points ?? 0) > 0 ? <span className="text-purple-600">{((s.volume_points ?? 0) * s.quantity).toFixed(2)}</span> : <span className="text-muted-foreground">—</span>}
                             </TableCell>
@@ -1069,9 +1111,11 @@ export default function CenterPage() {
                   </div>
 
                   <div className="bg-muted rounded-lg p-4 space-y-2 text-sm">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Total Amount</span><span className="font-semibold">{formatCurrency(invoiceGroup.totalAmount)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Total Selling</span><span className="font-semibold">{formatCurrency(invoiceGroup.totalAmount)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">My Cost</span><span>{formatCurrency(invoiceGroup.totalMyAmount)}</span></div>
                     {invoiceGroup.totalVP > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Volume Points</span><span className="text-purple-600 font-semibold">{invoiceGroup.totalVP.toFixed(2)} VP</span></div>}
                     {invoiceGroup.pendingAmount > 0 && <div className="flex justify-between text-orange-500"><span>Pending Amount</span><span className="font-semibold">{formatCurrency(invoiceGroup.pendingAmount)}</span></div>}
+                    <div className="flex justify-between font-bold border-t pt-2 mt-1"><span>Profit (received)</span><span className="text-green-600">{formatCurrency(invoiceGroup.totalProfit)}</span></div>
                   </div>
 
                   {invoiceGroup.status !== 'done' && (
@@ -1137,7 +1181,10 @@ export default function CenterPage() {
                   <div className="space-y-2"><Label>Quantity</Label><Input type="number" min={1} {...regEdit('quantity')} /></div>
                   <div className="space-y-2"><Label>Volume Points</Label><Input type="number" step="0.01" {...regEdit('volume_points')} /></div>
                 </div>
-                <div className="space-y-2"><Label>Price (₹) per unit</Label><Input type="number" step="0.01" {...regEdit('fixed_price')} /></div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="space-y-2"><Label>My Price (₹) per unit</Label><Input type="number" step="0.01" {...regEdit('my_price')} /></div>
+                  <div className="space-y-2"><Label>Selling Price (₹) per unit</Label><Input type="number" step="0.01" {...regEdit('fixed_price')} /></div>
+                </div>
                 <div className="space-y-2"><Label>Comments</Label><Textarea rows={2} {...regEdit('comments')} /></div>
                 <div className="flex gap-2 justify-end">
                   <Button type="button" variant="outline" onClick={() => { setEditOpen(false); setEditSale(null); }}>Cancel</Button>
