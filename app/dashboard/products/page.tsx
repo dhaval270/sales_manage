@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Label } from '@/components/ui/label';
 import { formatCurrency } from '@/lib/utils';
 import type { Product } from '@/types/database';
-import { Search, Upload, Pencil, Check, X, Plus, Trash2, Wand2, Loader2 } from 'lucide-react';
+import { Search, Pencil, Check, X, Plus, Trash2, Wand2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Image from 'next/image';
 
@@ -172,36 +172,6 @@ export default function ProductsPage() {
     }
   };
 
-  const handleCsvUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!userId) return;
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const text = await file.text();
-    const lines = text.trim().split('\n');
-    const headers = lines[0].split(',').map((h) => h.trim());
-    const rows = lines.slice(1).map((line) => {
-      const vals = line.split(',').map((v) => v.trim());
-      return Object.fromEntries(headers.map((h, i) => [h, vals[i]]));
-    });
-    const supabase = createClient();
-    const prods = rows.map((r) => ({
-      user_id: userId,
-      name: r.name,
-      category: r.category || null,
-      qty: r.qty || null,
-      retail_price: parseFloat(r.my_price) || 0,
-      image_url: r.image_url || null,
-      volume_points: parseFloat(r.volume_points) || 0,
-    }));
-    const { error } = await supabase.from('products').upsert(prods, { onConflict: 'name' });
-    if (error) {
-      toast({ title: 'Upload failed', description: error.message, variant: 'destructive' });
-    } else {
-      toast({ title: 'Products imported', description: `${prods.length} products uploaded.` });
-      fetchProducts(userId);
-    }
-    e.target.value = '';
-  };
 
   return (
     <div className="space-y-6">
@@ -215,12 +185,6 @@ export default function ProductsPage() {
             <Plus className="h-4 w-4" />
             Add Product
           </Button>
-          <label className="cursor-pointer">
-            <Button variant="outline" className="gap-2" asChild>
-              <span><Upload className="h-4 w-4" />Import CSV</span>
-            </Button>
-            <input type="file" accept=".csv" className="hidden" onChange={handleCsvUpload} />
-          </label>
         </div>
       </div>
 
@@ -257,11 +221,7 @@ export default function ProductsPage() {
         <div className="text-center py-16 space-y-3">
           {products.length === 0 ? (
             <>
-              <p className="text-muted-foreground">No products yet. Use &quot;Add Product&quot; or &quot;Import CSV&quot; to get started.</p>
-              <div className="inline-block text-left bg-muted rounded-md px-4 py-3">
-                <p className="text-xs text-muted-foreground mb-1 font-medium">CSV format:</p>
-                <code className="text-xs text-foreground">name, category, qty, my_price, image_url, volume_points</code>
-              </div>
+              <p className="text-muted-foreground">No products yet. Use &quot;Add Product&quot; to get started.</p>
             </>
           ) : (
             <p className="text-muted-foreground">No products match your search.</p>
