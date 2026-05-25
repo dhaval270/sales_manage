@@ -359,8 +359,10 @@ export default function CenterPage() {
   // Membership stats
   const membershipTodayRevenue = memberships.filter(m => m.start_date === today && m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
   const membershipMonthlyRevenue = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
+  const membershipTotalRevenue = memberships.filter(m => m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
   const membershipShakesToday = membershipVisits.filter(v => v.visit_date === today).length;
   const membershipShakesMonth = membershipVisits.filter(v => v.visit_date >= monthStart && v.visit_date <= monthEnd).length;
+  const membershipShakesTotal = membershipVisits.length;
   const membershipTodayEntries = memberships.filter(m => m.start_date === today && m.payment_status === 'paid').length;
   const membershipMonthEntries = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').length;
   const activeMembershipsCount = memberships.filter(m => membershipVisits.filter(v => v.membership_id === m.id).length < m.total_shakes).length;
@@ -1150,11 +1152,13 @@ export default function CenterPage() {
       {/* ─── MEMBERSHIPS TAB ─── */}
       {activeTab === 'memberships' && (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p><p className="text-xs text-muted-foreground">{membershipTodayEntries} paid membership{membershipTodayEntries !== 1 ? 's' : ''} today</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p><p className="text-xs text-muted-foreground">{membershipMonthEntries} paid this month · {memberships.filter(m => m.payment_status === 'pending').length} pending (₹{membershipPendingAmount.toFixed(0)})</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesToday}</p><p className="text-xs text-muted-foreground">total shakes served</p></CardContent></Card>
-            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesMonth}</p><p className="text-xs text-muted-foreground">total shakes served · {activeMembershipsCount} active</p></CardContent></Card>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p><p className="text-xs text-muted-foreground">{membershipTodayEntries} paid today</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p><p className="text-xs text-muted-foreground">{membershipMonthEntries} paid · {memberships.filter(m => m.payment_status === 'pending').length} pending</p></CardContent></Card>
+            <Card className="border-green-200 dark:border-green-800"><CardHeader className="pb-2"><CardTitle className="text-sm text-green-700 dark:text-green-400">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-700 dark:text-green-400">{formatCurrency(membershipTotalRevenue)}</p><p className="text-xs text-muted-foreground">{memberships.filter(m => m.payment_status === 'paid').length} paid memberships</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesToday}</p><p className="text-xs text-muted-foreground">served today</p></CardContent></Card>
+            <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesMonth}</p><p className="text-xs text-muted-foreground">served · {activeMembershipsCount} active</p></CardContent></Card>
+            <Card className="border-blue-200 dark:border-blue-800"><CardHeader className="pb-2"><CardTitle className="text-sm text-blue-700 dark:text-blue-400">Total Shakes</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-700 dark:text-blue-400">{membershipShakesTotal}</p><p className="text-xs text-muted-foreground">all-time served</p></CardContent></Card>
           </div>
 
           <div className="flex gap-2 flex-wrap">

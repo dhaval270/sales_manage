@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { DollarSign, Package, ShoppingCart, Clock } from 'lucide-react';
+import { DollarSign, Package, ShoppingCart, Clock, Cake } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default async function DashboardPage() {
@@ -9,7 +9,15 @@ export default async function DashboardPage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const now = new Date();
+  const today = format(now, 'yyyy-MM-dd');
+
+  // Birthday window: 2 days ago → today (month-day only)
+  const birthdayWindow = [0, 1, 2].map((offset) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - offset);
+    return { mmdd: format(d, 'MM-dd'), label: offset === 0 ? 'Today' : offset === 1 ? 'Yesterday' : '2 days ago' };
+  });
 
   const [
     { data: profile },
@@ -19,6 +27,7 @@ export default async function DashboardPage() {
     { data: pendingSales },
     { data: recentSales },
     { data: recentCenterSales },
+    { data: allCustomers },
   ] = await Promise.all([
     supabase.from('profiles').select('first_name').eq('id', user.id).single(),
     supabase.from('sales').select('retail_price, quantity').eq('user_id', user.id).eq('date', today),
@@ -27,7 +36,22 @@ export default async function DashboardPage() {
     supabase.from('sales').select('id').eq('user_id', user.id).eq('payment_status', 'pending'),
     supabase.from('sales').select('id, date, customer_name, product_name, retail_price, comments').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
     supabase.from('center_sales').select('id, date, customer_name, product_name, fixed_price').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
+    supabase.from('customers').select('id, full_name, phone, date_of_birth').eq('user_id', user.id).not('date_of_birth', 'is', null),
   ]);
+
+  // Match customers whose birthday month-day falls in the window
+  type BirthdayEntry = { id: number; full_name: string; phone: string | null; date_of_birth: string; label: string; isToday: boolean; age: number };
+  const birthdayCustomers: BirthdayEntry[] = (allCustomers ?? [])
+    .flatMap((c) => {
+      if (!c.date_of_birth) return [];
+      const mmdd = c.date_of_birth.slice(5); // "YYYY-MM-DD" → "MM-DD"
+      const match = birthdayWindow.find((w) => w.mmdd === mmdd);
+      if (!match) return [];
+      const birthYear = parseInt(c.date_of_birth.slice(0, 4));
+      const age = now.getFullYear() - birthYear;
+      return [{ ...c, label: match.label, isToday: match.label === 'Today', age }];
+    })
+    .sort((a, b) => (b.isToday ? 1 : 0) - (a.isToday ? 1 : 0));
 
   const todaySalesRevenue = (todaySales ?? []).reduce((acc, s) => acc + s.retail_price * s.quantity, 0);
   const todayCenterRevenue = (todayCenterSales ?? []).reduce((acc, s) => acc + s.fixed_price * s.quantity, 0);
@@ -68,6 +92,9 @@ export default async function DashboardPage() {
     },
   ];
 
+  const todayBirthdays = birthdayCustomers.filter(c => c.isToday);
+  const pastBirthdays = birthdayCustomers.filter(c => !c.isToday);
+
   return (
     <div className="space-y-6">
       <div>
@@ -78,6 +105,35 @@ export default async function DashboardPage() {
           {format(new Date(), 'EEEE, MMMM d, yyyy')}
         </p>
       </div>
+
+      {/* Birthday reminders */}
+      {birthdayCustomers.length > 0 && (
+        <div className={`rounded-xl border p-4 ${todayBirthdays.length > 0 ? 'border-pink-300 bg-pink-50 dark:bg-pink-950/20 dark:border-pink-800' : 'border-orange-200 bg-orange-50 dark:bg-orange-950/20 dark:border-orange-800'}`}>
+          <div className="flex items-center gap-2 mb-3">
+            <Cake className={`h-5 w-5 ${todayBirthdays.length > 0 ? 'text-pink-500' : 'text-orange-400'}`} />
+            <p className={`font-semibold text-sm ${todayBirthdays.length > 0 ? 'text-pink-700 dark:text-pink-300' : 'text-orange-700 dark:text-orange-300'}`}>
+              {todayBirthdays.length > 0 ? `🎂 ${todayBirthdays.length} Birthday${todayBirthdays.length > 1 ? 's' : ''} Today!` : 'Recent Birthdays'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {birthdayCustomers.map((c) => (
+              <div key={c.id} className={`flex items-center gap-3 rounded-lg px-3 py-2 ${c.isToday ? 'bg-pink-100 dark:bg-pink-900/30 border border-pink-200 dark:border-pink-700' : 'bg-white/70 dark:bg-white/5 border border-orange-100 dark:border-orange-800'}`}>
+                <div className={`h-8 w-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${c.isToday ? 'bg-pink-500 text-white' : 'bg-orange-200 text-orange-700'}`}>
+                  {c.full_name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold leading-tight">{c.full_name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {c.isToday ? `Turns ${c.age} today` : `${c.label} · turned ${c.age}`}
+                    {c.phone && <span> · {c.phone}</span>}
+                  </p>
+                </div>
+                {c.isToday && <span className="text-lg ml-1">🎉</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Stats cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

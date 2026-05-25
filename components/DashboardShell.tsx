@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -7,18 +8,9 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import {
-  LayoutDashboard,
-  ShoppingCart,
-  DollarSign,
-  Package,
-  Store,
-  Users,
-  Settings,
-  LogOut,
-  Menu,
-  X,
+  LayoutDashboard, ShoppingCart, DollarSign, Package,
+  Store, Users, Settings, LogOut,
 } from 'lucide-react';
-import { useState } from 'react';
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -30,14 +22,17 @@ const navItems = [
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ];
 
-interface SidebarProps {
+interface Props {
+  children: React.ReactNode;
   userName?: string;
 }
 
-export function Sidebar({ userName }: SidebarProps) {
+export function DashboardShell({ children, userName }: Props) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => { setOpen(false); }, [pathname]);
 
   const handleLogout = async () => {
     const supabase = createClient();
@@ -47,9 +42,10 @@ export function Sidebar({ userName }: SidebarProps) {
   };
 
   return (
-    <>
+    <div className="min-h-screen bg-background">
       {/* Top bar */}
       <div className="fixed top-0 left-0 right-0 z-40 flex items-center h-14 px-4 border-b bg-background gap-3">
+        {/* Hamburger — hover opens, click closes */}
         <button
           onMouseEnter={() => setOpen(true)}
           onClick={() => setOpen(false)}
@@ -65,23 +61,15 @@ export function Sidebar({ userName }: SidebarProps) {
           <Image src="/herbalife-logo.png" alt="Herbalife" width={28} height={28} className="object-contain" />
           <div>
             <p className="font-semibold text-sm leading-tight">Herbalife Manager</p>
-            {userName && <p className="text-xs text-muted-foreground truncate max-w-[160px]">{userName}</p>}
+            {userName && <p className="text-xs text-muted-foreground truncate max-w-[200px]">{userName}</p>}
           </div>
         </div>
       </div>
 
-      {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40"
-          onClick={() => setOpen(false)}
-        />
-      )}
-
-      {/* Sidebar panel */}
+      {/* Sidebar */}
       <aside
         className={cn(
-          'fixed left-0 top-14 bottom-0 z-40 w-56 border-r bg-background flex flex-col shadow-lg transition-transform duration-200',
+          'fixed left-0 top-14 bottom-0 z-30 w-56 border-r bg-background flex flex-col shadow-md transition-transform duration-200',
           open ? 'translate-x-0' : '-translate-x-full'
         )}
       >
@@ -122,6 +110,16 @@ export function Sidebar({ userName }: SidebarProps) {
           </Button>
         </div>
       </aside>
-    </>
+
+      {/* Main content — shifts right when sidebar is open */}
+      <main
+        className={cn(
+          'pt-14 transition-all duration-200',
+          open ? 'ml-56' : 'ml-0'
+        )}
+      >
+        <div className="p-4 md:p-6">{children}</div>
+      </main>
+    </div>
   );
 }
