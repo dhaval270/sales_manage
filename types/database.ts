@@ -80,6 +80,7 @@ export interface Database {
           profit: number;
           volume_points: number;
           comments: string | null;
+          section: string;
           created_at: string;
         };
         Insert: {
@@ -93,6 +94,7 @@ export interface Database {
           retail_price: number;
           volume_points?: number;
           comments?: string | null;
+          section?: string;
           created_at?: string;
         };
         Update: {
@@ -106,6 +108,7 @@ export interface Database {
           retail_price?: number;
           volume_points?: number;
           comments?: string | null;
+          section?: string;
           created_at?: string;
         };
       };
@@ -115,6 +118,7 @@ export interface Database {
           user_id: string;
           date: string;
           customer_name: string;
+          customer_phone: string | null;
           reference: string | null;
           product_id: number | null;
           product_name: string;
@@ -133,6 +137,7 @@ export interface Database {
           user_id: string;
           date?: string;
           customer_name: string;
+          customer_phone?: string | null;
           reference?: string | null;
           product_id?: number | null;
           product_name: string;
@@ -150,6 +155,7 @@ export interface Database {
           user_id?: string;
           date?: string;
           customer_name?: string;
+          customer_phone?: string | null;
           reference?: string | null;
           product_id?: number | null;
           product_name?: string;
@@ -192,6 +198,7 @@ export interface Database {
           user_id: string;
           date: string;
           customer_name: string;
+          customer_phone: string | null;
           reference: string | null;
           product_name: string;
           quantity: number;
@@ -207,6 +214,7 @@ export interface Database {
           user_id: string;
           date?: string;
           customer_name: string;
+          customer_phone?: string | null;
           reference?: string | null;
           product_name: string;
           quantity?: number;
@@ -222,6 +230,7 @@ export interface Database {
           user_id?: string;
           date?: string;
           customer_name?: string;
+          customer_phone?: string | null;
           reference?: string | null;
           product_name?: string;
           quantity?: number;
@@ -233,11 +242,148 @@ export interface Database {
           created_at?: string;
         };
       };
+      customers: {
+        Row: {
+          id: number;
+          user_id: string;
+          full_name: string;
+          phone: string | null;
+          date_of_birth: string | null;
+          gender: string | null;
+          status: string;
+          referred_by: string | null;
+          health_problem: string | null;
+          height_cm: number | null;
+          weight_kg: number | null;
+          bmi: number | null;
+          body_fat_pct: number | null;
+          visceral_fat: number | null;
+          bmr_kcal: number | null;
+          body_age: string | null;
+          subcutaneous_fat_pct: number | null;
+          trunk_subcutaneous_fat_pct: number | null;
+          arms_subcutaneous_fat_pct: number | null;
+          legs_subcutaneous_fat_pct: number | null;
+          is_daily_shake_member: boolean;
+          is_distributor: boolean;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          user_id: string;
+          full_name: string;
+          phone?: string | null;
+          date_of_birth?: string | null;
+          gender?: string | null;
+          status?: string;
+          referred_by?: string | null;
+          health_problem?: string | null;
+          height_cm?: number | null;
+          weight_kg?: number | null;
+          bmi?: number | null;
+          body_fat_pct?: number | null;
+          visceral_fat?: number | null;
+          bmr_kcal?: number | null;
+          body_age?: string | null;
+          subcutaneous_fat_pct?: number | null;
+          trunk_subcutaneous_fat_pct?: number | null;
+          arms_subcutaneous_fat_pct?: number | null;
+          legs_subcutaneous_fat_pct?: number | null;
+          is_daily_shake_member?: boolean;
+          is_distributor?: boolean;
+          notes?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          user_id?: string;
+          full_name?: string;
+          phone?: string | null;
+          date_of_birth?: string | null;
+          gender?: string | null;
+          status?: string;
+          referred_by?: string | null;
+          health_problem?: string | null;
+          height_cm?: number | null;
+          weight_kg?: number | null;
+          bmi?: number | null;
+          body_fat_pct?: number | null;
+          visceral_fat?: number | null;
+          bmr_kcal?: number | null;
+          body_age?: string | null;
+          subcutaneous_fat_pct?: number | null;
+          trunk_subcutaneous_fat_pct?: number | null;
+          arms_subcutaneous_fat_pct?: number | null;
+          legs_subcutaneous_fat_pct?: number | null;
+          is_daily_shake_member?: boolean;
+          is_distributor?: boolean;
+          notes?: string | null;
+          created_at?: string;
+        };
+      };
+      customer_health_readings: {
+        Row: {
+          id: number;
+          user_id: string;
+          customer_id: number;
+          reading_date: string;
+          height_cm: number | null;
+          weight_kg: number | null;
+          bmi: number | null;
+          body_fat_pct: number | null;
+          visceral_fat: number | null;
+          bmr_kcal: number | null;
+          body_age: string | null;
+          subcutaneous_fat_pct: number | null;
+          trunk_subcutaneous_fat_pct: number | null;
+          arms_subcutaneous_fat_pct: number | null;
+          legs_subcutaneous_fat_pct: number | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          user_id: string;
+          customer_id: number;
+          reading_date: string;
+          height_cm?: number | null;
+          weight_kg?: number | null;
+          bmi?: number | null;
+          body_fat_pct?: number | null;
+          visceral_fat?: number | null;
+          bmr_kcal?: number | null;
+          body_age?: string | null;
+          subcutaneous_fat_pct?: number | null;
+          trunk_subcutaneous_fat_pct?: number | null;
+          arms_subcutaneous_fat_pct?: number | null;
+          legs_subcutaneous_fat_pct?: number | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          user_id?: string;
+          customer_id?: number;
+          reading_date?: string;
+          height_cm?: number | null;
+          weight_kg?: number | null;
+          bmi?: number | null;
+          body_fat_pct?: number | null;
+          visceral_fat?: number | null;
+          bmr_kcal?: number | null;
+          body_age?: string | null;
+          subcutaneous_fat_pct?: number | null;
+          trunk_subcutaneous_fat_pct?: number | null;
+          arms_subcutaneous_fat_pct?: number | null;
+          legs_subcutaneous_fat_pct?: number | null;
+          created_at?: string;
+        };
+      };
       center_memberships: {
         Row: {
           id: number;
           user_id: string;
           customer_name: string;
+          customer_phone: string | null;
           reference: string | null;
           total_shakes: number;
           price: number;
@@ -250,6 +396,7 @@ export interface Database {
           id?: number;
           user_id: string;
           customer_name: string;
+          customer_phone?: string | null;
           reference?: string | null;
           total_shakes: number;
           price: number;
@@ -262,6 +409,7 @@ export interface Database {
           id?: number;
           user_id?: string;
           customer_name?: string;
+          customer_phone?: string | null;
           reference?: string | null;
           total_shakes?: number;
           price?: number;
@@ -302,6 +450,8 @@ export interface Database {
   };
 }
 
+export type Customer = Database['public']['Tables']['customers']['Row'];
+export type CustomerHealthReading = Database['public']['Tables']['customer_health_readings']['Row'];
 export type Profile = Database['public']['Tables']['profiles']['Row'];
 export type Product = Database['public']['Tables']['products']['Row'];
 export type Inventory = Database['public']['Tables']['inventory']['Row'];

@@ -14,7 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import type { Sale, Product } from '@/types/database';
+import type { Sale, Product, Customer } from '@/types/database';
 import { Plus, Pencil, Trash2, Receipt, Search, X, Eye, Download, FileText, RotateCcw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -61,6 +61,7 @@ type SaleGroup = {
   key: string;
   date: string;
   customer_name: string;
+  customer_phone: string | null;
   reference: string | null;
   items: Sale[];
   totalQty: number;
@@ -82,6 +83,7 @@ function groupSales(sales: Sale[]): SaleGroup[] {
         key,
         date: s.date,
         customer_name: s.customer_name,
+        customer_phone: s.customer_phone ?? null,
         reference: s.reference,
         items: [],
         totalQty: 0,
@@ -519,6 +521,13 @@ export default function SalesPage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
 
+  // Customer autocomplete
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [custPhoneAdd, setCustPhoneAdd] = useState('');
+  const [custPhoneEdit, setCustPhoneEdit] = useState('');
+  const [custDropdownAdd, setCustDropdownAdd] = useState(false);
+  const [custDropdownEdit, setCustDropdownEdit] = useState(false);
+
   // Per-line product search
   const [productSearches, setProductSearches] = useState<string[]>(['']);
   const [openDropdownIndex, setOpenDropdownIndex] = useState<number | null>(null);
@@ -538,7 +547,7 @@ export default function SalesPage() {
   const watchItems = watch('items');
 
   // Edit form
-  const { register: regEdit, handleSubmit: handleEditSubmit, reset: resetEdit, watch: watchEdit, formState: { errors: editErrors } } = useForm<EditForm>({
+  const { register: regEdit, handleSubmit: handleEditSubmit, reset: resetEdit, setValue: setValueEdit, watch: watchEdit, formState: { errors: editErrors } } = useForm<EditForm>({
     resolver: zodResolver(editSchema),
   });
   const editMyPrice = watchEdit('my_price') || 0;
@@ -548,13 +557,15 @@ export default function SalesPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
-    const [{ data: salesData }, { data: productsData }, { data: { user } }] = await Promise.all([
+    const [{ data: salesData }, { data: productsData }, { data: customersData }, { data: { user } }] = await Promise.all([
       supabase.from('sales').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('products').select('*').order('name'),
+      supabase.from('customers').select('id, full_name, phone').order('full_name'),
       supabase.auth.getUser(),
     ]);
     setSales(salesData ?? []);
     setProducts(productsData ?? []);
+    setCustomers((customersData ?? []) as Customer[]);
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
       if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
@@ -603,6 +614,8 @@ export default function SalesPage() {
     reset({ date: format(new Date(), 'yyyy-MM-dd'), customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] });
     setProductSearches(['']);
     setOpenDropdownIndex(null);
+    setCustPhoneAdd('');
+    setCustDropdownAdd(false);
   };
 
   const onSubmit = async (data: SaleForm) => {
@@ -615,6 +628,7 @@ export default function SalesPage() {
       user_id: user.id,
       date: data.date,
       customer_name: data.customer_name,
+      customer_phone: custPhoneAdd.trim() || null,
       reference: data.reference || null,
       product_name: item.product_name,
       quantity: item.quantity,
@@ -640,6 +654,7 @@ export default function SalesPage() {
     const { error } = await supabase.from('sales').update({
       date: data.date,
       customer_name: data.customer_name,
+      customer_phone: custPhoneEdit.trim() || null,
       reference: data.reference || null,
       product_name: data.product_name,
       quantity: data.quantity,
@@ -668,6 +683,8 @@ export default function SalesPage() {
       volume_points: sale.volume_points,
       comments: sale.comments ?? '',
     });
+    setCustPhoneEdit(sale.customer_phone ?? '');
+    setCustDropdownEdit(false);
     setEditOpen(true);
   };
 
@@ -943,9 +960,34 @@ export default function SalesPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Customer Name</Label>
-                    <Input placeholder="Customer" {...register('customer_name')} list="cust-list" />
-                    <datalist id="cust-list">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                    <div className="relative">
+                      <Input
+                        placeholder="Search by name or phone..."
+                        value={watch('customer_name')}
+                        onChange={(e) => { setValue('customer_name', e.target.value); setCustDropdownAdd(true); }}
+                        onFocus={() => setCustDropdownAdd(true)}
+                        onBlur={() => setTimeout(() => setCustDropdownAdd(false), 150)}
+                      />
+                      {custDropdownAdd && (
+                        <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto top-full mt-1">
+                          {customers.filter(c => {
+                            const q = watch('customer_name').toLowerCase();
+                            return c.full_name.toLowerCase().includes(q) || (c.phone ?? '').includes(q);
+                          }).slice(0, 8).map(c => (
+                            <button key={c.id} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                              onMouseDown={() => { setValue('customer_name', c.full_name); setCustPhoneAdd(c.phone ?? ''); setCustDropdownAdd(false); }}>
+                              <span className="font-medium">{c.full_name}</span>
+                              {c.phone && <span className="ml-2 text-xs text-muted-foreground">{c.phone}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     {errors.customer_name && <p className="text-xs text-destructive">{errors.customer_name.message}</p>}
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Customer Phone</Label>
+                    <Input placeholder="Auto-filled or type..." value={custPhoneAdd} onChange={(e) => setCustPhoneAdd(e.target.value)} />
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -1158,7 +1200,10 @@ export default function SalesPage() {
                       onClick={() => { setInvoiceGroup(group); setInvoiceOpen(true); }}
                     >
                       <TableCell className="text-sm">{formatDate(group.date)}</TableCell>
-                      <TableCell className="text-sm font-medium">{group.customer_name}</TableCell>
+                      <TableCell>
+                        <p className="text-sm font-medium">{group.customer_name}</p>
+                        {group.customer_phone && <p className="text-xs text-muted-foreground">{group.customer_phone}</p>}
+                      </TableCell>
                       <TableCell className="text-sm text-muted-foreground hidden md:table-cell">{group.reference ?? '—'}</TableCell>
                       <TableCell className="text-right text-sm">{group.items.length}</TableCell>
                       <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
@@ -1329,9 +1374,33 @@ export default function SalesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Customer Name</Label>
-                <Input {...regEdit('customer_name')} list="edit-cust" />
-                <datalist id="edit-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                <div className="relative">
+                  <Input
+                    value={watchEdit('customer_name')}
+                    onChange={(e) => { setValueEdit('customer_name', e.target.value); setCustDropdownEdit(true); }}
+                    onFocus={() => setCustDropdownEdit(true)}
+                    onBlur={() => setTimeout(() => setCustDropdownEdit(false), 150)}
+                  />
+                  {custDropdownEdit && (
+                    <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto top-full mt-1">
+                      {customers.filter(c => {
+                        const q = (watchEdit('customer_name') ?? '').toLowerCase();
+                        return c.full_name.toLowerCase().includes(q) || (c.phone ?? '').includes(q);
+                      }).slice(0, 8).map(c => (
+                        <button key={c.id} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                          onMouseDown={() => { setValueEdit('customer_name', c.full_name); setCustPhoneEdit(c.phone ?? ''); setCustDropdownEdit(false); }}>
+                          <span className="font-medium">{c.full_name}</span>
+                          {c.phone && <span className="ml-2 text-xs text-muted-foreground">{c.phone}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {editErrors.customer_name && <p className="text-xs text-destructive">{editErrors.customer_name.message}</p>}
+              </div>
+              <div className="space-y-2">
+                <Label>Customer Phone</Label>
+                <Input value={custPhoneEdit} onChange={(e) => setCustPhoneEdit(e.target.value)} placeholder="Auto-filled or type..." />
               </div>
             </div>
             <div className="space-y-2">

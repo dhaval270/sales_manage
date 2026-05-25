@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import type { CenterMenu, CenterSale, CenterMembership, CenterMembershipVisit, Product } from '@/types/database';
+import type { CenterMenu, CenterSale, CenterMembership, CenterMembershipVisit, Product, Customer } from '@/types/database';
 import { Plus, Pencil, Trash2, Settings, Download, CheckCircle2, Circle, Users, Search, RotateCcw, Receipt, FileText, X, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format, startOfMonth, endOfMonth } from 'date-fns';
@@ -51,6 +51,8 @@ const membershipSchema = z.object({
   start_date: z.string().min(1, 'Start date is required'),
 });
 
+
+
 type SaleForm = z.infer<typeof saleSchema>;
 type MenuForm = z.infer<typeof menuSchema>;
 type MembershipForm = z.infer<typeof membershipSchema>;
@@ -63,6 +65,7 @@ type CenterSaleGroup = {
   key: string;
   date: string;
   customer_name: string;
+  customer_phone: string | null;
   reference: string | null;
   items: CenterSale[];
   totalQty: number;
@@ -78,7 +81,7 @@ function groupCenterSales(sales: CenterSale[]): CenterSaleGroup[] {
   for (const s of sales) {
     const key = `${s.date}|${s.customer_name}|${s.reference ?? ''}`;
     if (!map.has(key)) {
-      map.set(key, { key, date: s.date, customer_name: s.customer_name, reference: s.reference, items: [], totalQty: 0, totalAmount: 0, totalVP: 0, pendingAmount: 0, status: 'done', allIds: [] });
+      map.set(key, { key, date: s.date, customer_name: s.customer_name, customer_phone: s.customer_phone ?? null, reference: s.reference, items: [], totalQty: 0, totalAmount: 0, totalVP: 0, pendingAmount: 0, status: 'done', allIds: [] });
     }
     const g = map.get(key)!;
     g.items.push(s);
@@ -214,6 +217,15 @@ export default function CenterPage() {
   const [editSale, setEditSale] = useState<CenterSale | null>(null);
   const [editOpen, setEditOpen] = useState(false);
 
+  // Customer autocomplete
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [custPhoneAdd, setCustPhoneAdd] = useState('');
+  const [custPhoneEdit, setCustPhoneEdit] = useState('');
+  const [custPhoneMembership, setCustPhoneMembership] = useState('');
+  const [custDropdownAdd, setCustDropdownAdd] = useState(false);
+  const [custDropdownEdit, setCustDropdownEdit] = useState(false);
+  const [custDropdownMembership, setCustDropdownMembership] = useState(false);
+
   // Per-line product search
   const [productSearches, setProductSearches] = useState<string[]>(['']);
   const [openDropdownIndex, setOpenDropdownIndex] = useState<number | null>(null);
@@ -270,7 +282,7 @@ export default function CenterPage() {
     comments: z.string().optional(),
   });
   type EditForm = z.infer<typeof editSchema>;
-  const { register: regEdit, handleSubmit: handleEditSubmit, reset: resetEdit, formState: { errors: editErrors } } = useForm<EditForm>({ resolver: zodResolver(editSchema) });
+  const { register: regEdit, handleSubmit: handleEditSubmit, reset: resetEdit, setValue: setValueEdit, watch: watchEdit, formState: { errors: editErrors } } = useForm<EditForm>({ resolver: zodResolver(editSchema) });
 
   const menuForm = useForm<MenuForm>({ resolver: zodResolver(menuSchema) });
   const membershipForm = useForm<MembershipForm>({
@@ -282,18 +294,20 @@ export default function CenterPage() {
     setLoading(true);
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    const [{ data: salesData }, { data: menuData }, { data: membershipsData }, { data: visitsData }, { data: productsData }] = await Promise.all([
+    const [{ data: salesData }, { data: menuData }, { data: membershipsData }, { data: visitsData }, { data: productsData }, { data: customersData }] = await Promise.all([
       supabase.from('center_sales').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('center_menu').select('*').order('item_name'),
       supabase.from('center_memberships').select('*').order('created_at', { ascending: false }),
       supabase.from('center_membership_visits').select('*').order('visit_date', { ascending: true }),
       supabase.from('products').select('*').order('name'),
+      supabase.from('customers').select('id, full_name, phone').order('full_name'),
     ]);
     setSales(salesData ?? []);
     setMenu(menuData ?? []);
     setMemberships((membershipsData ?? []) as CenterMembership[]);
     setMembershipVisits((visitsData ?? []) as CenterMembershipVisit[]);
     setProducts(productsData ?? []);
+    setCustomers((customersData ?? []) as Customer[]);
     if (user) {
       const { data: profile } = await supabase.from('profiles').select('first_name, last_name').eq('id', user.id).single();
       if (profile) setManagerName(`${profile.first_name} ${profile.last_name}`);
@@ -377,6 +391,8 @@ export default function CenterPage() {
     reset({ date: today, customer_name: '', reference: '', payment_method: 'cash', items: [emptyItem] });
     setProductSearches(['']);
     setOpenDropdownIndex(null);
+    setCustPhoneAdd('');
+    setCustDropdownAdd(false);
   };
 
   // CRUD
@@ -389,6 +405,7 @@ export default function CenterPage() {
       user_id: user.id,
       date: data.date,
       customer_name: data.customer_name,
+      customer_phone: custPhoneAdd.trim() || null,
       reference: data.reference || null,
       product_name: item.product_name,
       quantity: item.quantity,
@@ -410,9 +427,9 @@ export default function CenterPage() {
     if (!editSale) return;
     const supabase = createClient();
     const { error } = await supabase.from('center_sales').update({
-      date: data.date, customer_name: data.customer_name, reference: data.reference || null,
-      product_name: data.product_name, quantity: data.quantity, fixed_price: data.fixed_price,
-      volume_points: data.volume_points || 0, comments: data.comments || null,
+      date: data.date, customer_name: data.customer_name, customer_phone: custPhoneEdit.trim() || null,
+      reference: data.reference || null, product_name: data.product_name, quantity: data.quantity,
+      fixed_price: data.fixed_price, volume_points: data.volume_points || 0, comments: data.comments || null,
     }).eq('id', editSale.id);
     if (error) { toast({ title: 'Update failed', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'Sale updated' });
@@ -430,6 +447,8 @@ export default function CenterPage() {
   const handleEdit = (sale: CenterSale) => {
     setEditSale(sale);
     resetEdit({ date: sale.date, customer_name: sale.customer_name, reference: sale.reference ?? '', product_name: sale.product_name, quantity: sale.quantity, fixed_price: sale.fixed_price, volume_points: sale.volume_points, comments: sale.comments ?? '' });
+    setCustPhoneEdit(sale.customer_phone ?? '');
+    setCustDropdownEdit(false);
     setEditOpen(true);
   };
 
@@ -505,10 +524,11 @@ export default function CenterPage() {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
-    const { error } = await supabase.from('center_memberships').insert({ user_id: user.id, customer_name: data.customer_name, reference: data.reference || null, total_shakes: data.total_shakes, price: data.price, payment_status: data.payment_status, start_date: data.start_date });
+    const { error } = await supabase.from('center_memberships').insert({ user_id: user.id, customer_name: data.customer_name, customer_phone: custPhoneMembership.trim() || null, reference: data.reference || null, total_shakes: data.total_shakes, price: data.price, payment_status: data.payment_status, start_date: data.start_date });
     if (error) { toast({ title: 'Failed to create membership', description: error.message, variant: 'destructive' }); return; }
     toast({ title: 'Membership created' });
     setAddMembershipOpen(false);
+    setCustPhoneMembership('');
     membershipForm.reset({ payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 });
     fetchData();
   };
@@ -554,6 +574,8 @@ export default function CenterPage() {
   };
 
   const handleRenewMembership = (customerName: string) => {
+    const existing = customers.find(c => c.full_name === customerName);
+    setCustPhoneMembership(existing?.phone ?? '');
     membershipForm.reset({ customer_name: customerName, payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 });
     setAddMembershipOpen(true);
   };
@@ -732,9 +754,34 @@ export default function CenterPage() {
                       <div className="space-y-2"><Label>Date</Label><Input type="date" {...register('date')} />{errors.date && <p className="text-xs text-destructive">{errors.date.message}</p>}</div>
                       <div className="space-y-2">
                         <Label>Customer Name</Label>
-                        <Input placeholder="Customer" {...register('customer_name')} list="center-cust" />
-                        <datalist id="center-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                        <div className="relative">
+                          <Input
+                            placeholder="Search by name or phone..."
+                            value={watch('customer_name')}
+                            onChange={(e) => { setValue('customer_name', e.target.value); setCustDropdownAdd(true); }}
+                            onFocus={() => setCustDropdownAdd(true)}
+                            onBlur={() => setTimeout(() => setCustDropdownAdd(false), 150)}
+                          />
+                          {custDropdownAdd && (
+                            <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto top-full mt-1">
+                              {customers.filter(c => {
+                                const q = watch('customer_name').toLowerCase();
+                                return c.full_name.toLowerCase().includes(q) || (c.phone ?? '').includes(q);
+                              }).slice(0, 8).map(c => (
+                                <button key={c.id} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                                  onMouseDown={() => { setValue('customer_name', c.full_name); setCustPhoneAdd(c.phone ?? ''); setCustDropdownAdd(false); }}>
+                                  <span className="font-medium">{c.full_name}</span>
+                                  {c.phone && <span className="ml-2 text-xs text-muted-foreground">{c.phone}</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         {errors.customer_name && <p className="text-xs text-destructive">{errors.customer_name.message}</p>}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Customer Phone</Label>
+                        <Input placeholder="Auto-filled or type..." value={custPhoneAdd} onChange={(e) => setCustPhoneAdd(e.target.value)} />
                       </div>
                     </div>
                     <div className="space-y-2"><Label>Reference (optional)</Label><Input placeholder="Reference" {...register('reference')} /></div>
@@ -940,7 +987,10 @@ export default function CenterPage() {
                       {saleGroups.map((group) => (
                         <TableRow key={group.key} className="cursor-pointer hover:bg-accent/50" onClick={() => { setInvoiceGroup(group); setInvoiceOpen(true); }}>
                           <TableCell className="text-sm">{formatDate(group.date)}</TableCell>
-                          <TableCell className="text-sm font-medium">{group.customer_name}</TableCell>
+                          <TableCell>
+                            <p className="text-sm font-medium">{group.customer_name}</p>
+                            {group.customer_phone && <p className="text-xs text-muted-foreground">{group.customer_phone}</p>}
+                          </TableCell>
                           <TableCell className="text-sm text-muted-foreground hidden md:table-cell">{group.reference ?? '—'}</TableCell>
                           <TableCell className="text-right text-sm">{group.items.length}</TableCell>
                           <TableCell className="text-right text-sm">{group.totalQty}</TableCell>
@@ -1046,10 +1096,34 @@ export default function CenterPage() {
                   <div className="space-y-2"><Label>Date</Label><Input type="date" {...regEdit('date')} /></div>
                   <div className="space-y-2">
                     <Label>Customer Name</Label>
-                    <Input {...regEdit('customer_name')} list="edit-cust" />
-                    <datalist id="edit-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
+                    <div className="relative">
+                      <Input
+                        value={watchEdit('customer_name') ?? ''}
+                        onChange={(e) => { setValueEdit('customer_name', e.target.value); setCustDropdownEdit(true); }}
+                        onFocus={() => setCustDropdownEdit(true)}
+                        onBlur={() => setTimeout(() => setCustDropdownEdit(false), 150)}
+                      />
+                      {custDropdownEdit && (
+                        <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto top-full mt-1">
+                          {customers.filter(c => {
+                            const q = (watchEdit('customer_name') ?? '').toLowerCase();
+                            return c.full_name.toLowerCase().includes(q) || (c.phone ?? '').includes(q);
+                          }).slice(0, 8).map(c => (
+                            <button key={c.id} type="button" className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                              onMouseDown={() => { setValueEdit('customer_name', c.full_name); setCustPhoneEdit(c.phone ?? ''); setCustDropdownEdit(false); }}>
+                              <span className="font-medium">{c.full_name}</span>
+                              {c.phone && <span className="ml-2 text-xs text-muted-foreground">{c.phone}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     {editErrors.customer_name && <p className="text-xs text-destructive">{editErrors.customer_name.message}</p>}
                   </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Customer Phone</Label>
+                  <Input placeholder="Auto-filled or type..." value={custPhoneEdit} onChange={(e) => setCustPhoneEdit(e.target.value)} />
                 </div>
                 <div className="space-y-2"><Label>Reference</Label><Input {...regEdit('reference')} /></div>
                 <div className="space-y-2">
@@ -1084,14 +1158,41 @@ export default function CenterPage() {
           </div>
 
           <div className="flex gap-2 flex-wrap">
-            <Dialog open={addMembershipOpen} onOpenChange={(v) => { setAddMembershipOpen(v); if (!v) membershipForm.reset({ payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 }); }}>
+            <Dialog open={addMembershipOpen} onOpenChange={(v) => { setAddMembershipOpen(v); if (!v) { setCustPhoneMembership(''); setCustDropdownMembership(false); membershipForm.reset({ payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 }); } }}>
               <DialogTrigger asChild><Button className="gap-2"><Plus className="h-4 w-4" />New Membership</Button></DialogTrigger>
               <DialogContent className="max-w-md">
                 <DialogHeader><DialogTitle>Create Membership</DialogTitle></DialogHeader>
                 <form onSubmit={membershipForm.handleSubmit(onMembershipSubmit)} className="space-y-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>Customer Name</Label><Input placeholder="Customer" {...membershipForm.register('customer_name')} list="membership-cust" /><datalist id="membership-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>{membershipForm.formState.errors.customer_name && <p className="text-xs text-destructive">{membershipForm.formState.errors.customer_name.message}</p>}</div>
+                    <div className="space-y-2">
+                      <Label>Customer Name</Label>
+                      <div className="relative">
+                        <Input
+                          placeholder="Search by name or phone..."
+                          value={membershipForm.watch('customer_name') ?? ''}
+                          onChange={(e) => { membershipForm.setValue('customer_name', e.target.value); setCustDropdownMembership(true); }}
+                          onFocus={() => setCustDropdownMembership(true)}
+                          onBlur={() => setTimeout(() => setCustDropdownMembership(false), 150)}
+                        />
+                        {custDropdownMembership && (
+                          <div className="absolute z-50 w-full bg-background border rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
+                            {customers.filter(c => { const q = (membershipForm.watch('customer_name') ?? '').toLowerCase(); return c.full_name.toLowerCase().includes(q) || (c.phone ?? '').includes(q); }).slice(0, 8).map(c => (
+                              <div key={c.id} className="px-3 py-2 hover:bg-accent cursor-pointer text-sm"
+                                onMouseDown={() => { membershipForm.setValue('customer_name', c.full_name); setCustPhoneMembership(c.phone ?? ''); setCustDropdownMembership(false); }}>
+                                <span className="font-medium">{c.full_name}</span>
+                                {c.phone && <span className="text-muted-foreground ml-2">{c.phone}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {membershipForm.formState.errors.customer_name && <p className="text-xs text-destructive">{membershipForm.formState.errors.customer_name.message}</p>}
+                    </div>
                     <div className="space-y-2"><Label>Reference (optional)</Label><Input placeholder="Reference" {...membershipForm.register('reference')} /></div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Customer Phone</Label>
+                    <Input placeholder="Auto-filled or type..." value={custPhoneMembership} onChange={(e) => setCustPhoneMembership(e.target.value)} />
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2"><Label>Total Shakes</Label><Input type="number" min={1} {...membershipForm.register('total_shakes')} />{membershipForm.formState.errors.total_shakes && <p className="text-xs text-destructive">{membershipForm.formState.errors.total_shakes.message}</p>}</div>

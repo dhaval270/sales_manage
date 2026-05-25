@@ -12,6 +12,7 @@ import {
   DollarSign,
   Package,
   Store,
+  Users,
   Settings,
   LogOut,
   Menu,
@@ -25,6 +26,7 @@ const navItems = [
   { href: '/dashboard/sales', label: 'Sales', icon: DollarSign },
   { href: '/dashboard/inventory', label: 'Inventory', icon: Package },
   { href: '/dashboard/center', label: 'Center', icon: Store },
+  { href: '/dashboard/customers', label: 'Customers', icon: Users },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ];
 
