@@ -551,7 +551,21 @@ export default function CenterPage() {
     if (!user) return;
     const { error } = await supabase.from('center_memberships').insert({ user_id: user.id, customer_name: data.customer_name, customer_phone: custPhoneMembership.trim() || null, reference: data.reference || null, total_shakes: data.total_shakes, price: data.price, payment_status: data.payment_status, start_date: data.start_date });
     if (error) { toast({ title: 'Failed to create membership', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'Membership created' });
+
+    // Auto-create customer if not already in the list
+    const exists = customers.some(c => c.full_name.toLowerCase() === data.customer_name.trim().toLowerCase());
+    if (!exists) {
+      await supabase.from('customers').insert({
+        user_id: user.id,
+        full_name: data.customer_name.trim(),
+        phone: custPhoneMembership.trim() || null,
+        status: 'active',
+      });
+      toast({ title: 'Membership created', description: `"${data.customer_name.trim()}" added as a new customer.` });
+    } else {
+      toast({ title: 'Membership created' });
+    }
+
     setAddMembershipOpen(false);
     setCustPhoneMembership('');
     membershipForm.reset({ payment_status: 'pending', start_date: today, total_shakes: 1, price: 0 });
