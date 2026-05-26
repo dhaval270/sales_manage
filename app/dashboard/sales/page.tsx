@@ -779,6 +779,8 @@ export default function SalesPage() {
   // Summary totals
   const totalRevenue = filteredSales.reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalProfit = filteredSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0);
+  const totalCashRevenue = filteredSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.retail_price * s.quantity, 0);
+  const totalOnlineRevenue = filteredSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.retail_price * s.quantity, 0);
   const totalCashAmount = filteredSales.filter((s) => s.payment_method === 'cash').reduce((a, s) => a + s.profit * s.quantity, 0);
   const totalOnlineAmount = filteredSales.filter((s) => s.payment_method === 'online').reduce((a, s) => a + s.profit * s.quantity, 0);
   const totalPendingAmount = filteredSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.retail_price * s.quantity, 0);
@@ -1172,11 +1174,13 @@ export default function SalesPage() {
       </Card>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-4">
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(totalRevenue)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-600">{formatCurrency(totalProfit)}</p></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
-        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCashRevenue)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-600">{formatCurrency(totalOnlineRevenue)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Cash Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-emerald-500">{formatCurrency(totalCashAmount)}</p></CardContent></Card>
+        <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Online Profit</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-500">{formatCurrency(totalOnlineAmount)}</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Total Volume Points</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-purple-600">{totalVolumePoints.toFixed(2)} VP</p></CardContent></Card>
         <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Pending Amount</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-orange-500">{formatCurrency(totalPendingAmount)}</p></CardContent></Card>
       </div>
