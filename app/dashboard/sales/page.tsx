@@ -181,7 +181,7 @@ function printInvoice(group: SaleGroup, managerName: string) {
       ${group.reference ? `Ref: ${group.reference}` : ''}
     </div>
     <div style="text-align:right">
-      <strong>Date:</strong> ${group.date}<br/>
+      <strong>Date:</strong> ${group.date.split('-').reverse().join('/')}<br/>
       <strong>Manager:</strong> ${managerName}
     </div>
   </div>
@@ -246,7 +246,7 @@ function printCustomerInvoice(customerSales: Sale[], customerName: string, manag
       const profit = totalRetail - totalMy;
       return `
       <tr>
-        <td>${date}</td>
+        <td>${date.split('-').reverse().join('/')}</td>
         <td>${s.product_name}</td>
         <td class="num">${s.quantity}</td>
         <td class="num">₹${s.retail_price.toFixed(2)}</td>
@@ -402,7 +402,7 @@ function printPeriodReport(
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Period Report ${from} to ${to}</title>
+  <title>Period Report ${from.split('-').reverse().join('/')} to ${to.split('-').reverse().join('/')}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
@@ -433,7 +433,7 @@ function printPeriodReport(
   <p class="sub">Herbalife Sales Manager</p>
   <div class="meta">
     <div>
-      <strong>Period:</strong> ${from} to ${to}<br/>
+      <strong>Period:</strong> ${from.split('-').reverse().join('/')} to ${to.split('-').reverse().join('/')}<br/>
       <strong>Total Transactions:</strong> ${periodSales.length} items (${totalQty} units)
     </div>
     <div style="text-align:right">
@@ -482,7 +482,7 @@ function printPeriodReport(
     <strong>Notes:</strong> Profit is calculated only from received payments (done status). Pending amount represents unpaid sales. My Cost for this period: ₹${myCost.toFixed(2)}.
   </div>
 
-  <div class="footer">Herbalife Sales Manager · Period Report · ${from} to ${to}</div>
+  <div class="footer">Herbalife Sales Manager · Period Report · ${from.split('-').reverse().join('/')} to ${to.split('-').reverse().join('/')}</div>
   <script>window.onload = () => { window.print(); }<\/script>
 </body>
 </html>`;
@@ -891,71 +891,6 @@ export default function SalesPage() {
                 {!periodFrom && !periodTo && (
                   <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>
                 )}
-              </div>
-            </DialogContent>
-          </Dialog>
-
-          {/* Customer-wide Invoice */}
-          <Dialog open={customerInvoiceOpen} onOpenChange={(v) => { setCustomerInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
-            <DialogTrigger asChild>
-              <Button variant="outline" className="gap-2"><Receipt className="h-4 w-4" />Invoice</Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader><DialogTitle>Customer Invoice</DialogTitle></DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Customer Name</Label>
-                  <Input placeholder="Type customer name..." value={invoiceCustomer} onChange={(e) => setInvoiceCustomer(e.target.value)} list="inv-cust" />
-                  <datalist id="inv-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
-                </div>
-                {invoiceCustomer && customerInvoiceSales.length > 0 && (
-                  <div className="space-y-3">
-                    <div className="flex justify-end">
-                      <Button size="sm" variant="outline" className="gap-2" onClick={() => printCustomerInvoice(customerInvoiceSales, invoiceCustomer, managerName)}>
-                        <Download className="h-4 w-4" />Download PDF
-                      </Button>
-                    </div>
-                    <div className="border rounded-lg overflow-hidden">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Product</TableHead>
-                            <TableHead className="text-right">Qty</TableHead>
-                            <TableHead className="text-right">Unit</TableHead>
-                            <TableHead className="text-right">Total</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {customerInvoiceSales.map((s) => (
-                            <TableRow key={s.id}>
-                              <TableCell className="text-sm">{s.product_name}</TableCell>
-                              <TableCell className="text-right text-sm">{s.quantity}</TableCell>
-                              <TableCell className="text-right text-sm">{formatCurrency(s.retail_price)}</TableCell>
-                              <TableCell className="text-right text-sm font-medium">{formatCurrency(s.retail_price * s.quantity)}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                    <div className="bg-muted p-3 rounded-lg space-y-1 text-sm">
-                      <div className="flex justify-between"><span>Total Selling</span><span className="font-medium">{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.retail_price * s.quantity, 0))}</span></div>
-                      <div className="flex justify-between"><span>My Cost</span><span>{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.my_price * s.quantity, 0))}</span></div>
-                      <div className="flex justify-between font-bold border-t pt-1 mt-1"><span>Profit</span><span className="text-green-600">{formatCurrency(customerInvoiceSales.filter((s) => s.payment_status === 'done').reduce((a, s) => a + s.profit * s.quantity, 0))}</span></div>
-                    </div>
-                    {customerInvoicePending.length > 0 ? (
-                      <div>
-                        <p className="text-sm font-medium mb-2">{customerInvoicePending.length} pending. Mark as done:</p>
-                        <div className="flex gap-2">
-                          <Button size="sm" className="flex-1" onClick={() => handleMarkCustomerPaid('online')}>Online</Button>
-                          <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkCustomerPaid('cash')}>Cash</Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Badge variant="success" className="w-full justify-center py-1">All payments done</Badge>
-                    )}
-                  </div>
-                )}
-                {invoiceCustomer && customerInvoiceSales.length === 0 && <p className="text-muted-foreground text-sm text-center py-4">No sales found for this customer.</p>}
               </div>
             </DialogContent>
           </Dialog>

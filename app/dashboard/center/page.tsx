@@ -176,11 +176,12 @@ function printCenterPeriodReport(periodSales: CenterSale[], from: string, to: st
   const customerRows = Array.from(byCustomer.entries()).sort((a, b) => b[1].revenue - a[1].revenue).map(([name, d]) => `
     <tr><td>${name}</td><td class="num">₹${d.revenue.toFixed(2)}</td><td class="num" style="color:#059669">${d.cash > 0 ? `₹${d.cash.toFixed(2)}` : '—'}</td><td class="num" style="color:#2563eb">${d.online > 0 ? `₹${d.online.toFixed(2)}` : '—'}</td><td class="num">${d.vp.toFixed(2)}</td><td class="num" style="color:${d.pending > 0 ? '#d97706' : '#16a34a'}">${d.pending > 0 ? `₹${d.pending.toFixed(2)}` : '—'}</td></tr>`).join('');
 
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Center Period Report ${from} to ${to}</title>
+  const fd = (d: string) => { if (!d || d === 'all') return d; const [y, mo, day] = d.split('-'); return `${day}/${mo}/${y}`; };
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Center Period Report ${fd(from)} to ${fd(to)}</title>
   <style>* {box-sizing:border-box;margin:0;padding:0} body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px} h1{font-size:22px;margin-bottom:4px} h2{font-size:15px;margin:24px 0 10px;color:#333} .sub{color:#666;font-size:12px;margin-bottom:24px} .meta{display:flex;justify-content:space-between;margin-bottom:24px} .summary-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:28px} .card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px} .card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em} .card .value{font-size:16px;font-weight:700} table{width:100%;border-collapse:collapse;margin-bottom:20px} th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:12px;border-bottom:2px solid #ddd} td{padding:8px 10px;border-bottom:1px solid #eee} .num{text-align:right} tfoot tr td{font-weight:bold;background:#f9fafb} .footer{margin-top:40px;font-size:11px;color:#999;text-align:center} @media print{button{display:none}}</style>
   </head><body>
   <h1>Center Period Sales Report</h1><p class="sub">Herbalife Sales Manager</p>
-  <div class="meta"><div><strong>Period:</strong> ${from} to ${to}<br/><strong>Total Transactions:</strong> ${periodSales.length} items (${totalQty} units)</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
+  <div class="meta"><div><strong>Period:</strong> ${fd(from)} to ${fd(to)}<br/><strong>Total Transactions:</strong> ${periodSales.length} items (${totalQty} units)</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
   <div class="summary-grid">
     <div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#1d4ed8">₹${revenue.toFixed(2)}</div></div>
     <div class="card"><div class="label">Cash Received</div><div class="value" style="color:#059669">₹${cashAmount.toFixed(2)}</div></div>
@@ -192,7 +193,7 @@ function printCenterPeriodReport(periodSales: CenterSale[], from: string, to: st
   <table><thead><tr><th>Customer</th><th class="num">Revenue</th><th class="num">Cash</th><th class="num">Online</th><th class="num">Volume Points</th><th class="num">Pending</th></tr></thead>
   <tbody>${customerRows}</tbody>
   <tfoot><tr><td>TOTAL</td><td class="num">₹${revenue.toFixed(2)}</td><td class="num" style="color:#059669">₹${cashAmount.toFixed(2)}</td><td class="num" style="color:#2563eb">₹${onlineAmount.toFixed(2)}</td><td class="num">${volumePoints.toFixed(2)}</td><td class="num" style="color:#d97706">${pendingAmount > 0 ? `₹${pendingAmount.toFixed(2)}` : '—'}</td></tr></tfoot></table>
-  <div class="footer">Herbalife Sales Manager · Center · Period Report · ${from} to ${to}</div>
+  <div class="footer">Herbalife Sales Manager · Center · Period Report · ${fd(from)} to ${fd(to)}</div>
   <script>window.onload=()=>{window.print()}<\/script></body></html>`;
 
   const win = window.open('', '_blank');
@@ -247,6 +248,9 @@ export default function CenterPage() {
   const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
   const [commentDraft, setCommentDraft] = useState('');
   const [managerName, setManagerName] = useState('Manager');
+  const [membershipPeriodOpen, setMembershipPeriodOpen] = useState(false);
+  const [membershipPeriodFrom, setMembershipPeriodFrom] = useState('');
+  const [membershipPeriodTo, setMembershipPeriodTo] = useState('');
 
   // Filters
   const [filterCustomer, setFilterCustomer] = useState('');
@@ -376,6 +380,16 @@ export default function CenterPage() {
   const membershipMonthEntries = memberships.filter(m => m.start_date >= monthStart && m.start_date <= monthEnd && m.payment_status === 'paid').length;
   const activeMembershipsCount = memberships.filter(m => membershipVisits.filter(v => v.membership_id === m.id).length < m.total_shakes).length;
   const membershipPendingAmount = memberships.filter(m => m.payment_status === 'pending').reduce((a, m) => a + m.price, 0);
+
+  // Membership period report
+  const membershipPeriodData = memberships.filter(m => {
+    if (!membershipPeriodFrom && !membershipPeriodTo) return false;
+    if (membershipPeriodFrom && m.start_date < membershipPeriodFrom) return false;
+    if (membershipPeriodTo && m.start_date > membershipPeriodTo) return false;
+    return true;
+  });
+  const membershipPeriodRevenue = membershipPeriodData.filter(m => m.payment_status === 'paid').reduce((a, m) => a + m.price, 0);
+  const membershipPeriodPending = membershipPeriodData.filter(m => m.payment_status === 'pending').reduce((a, m) => a + m.price, 0);
 
   // Product search helpers
   const getFilteredSuggestions = (search: string) => {
@@ -583,7 +597,15 @@ export default function CenterPage() {
     if (!user) return;
     const { error } = await supabase.from('center_membership_visits').insert({ membership_id: membership.id, user_id: user.id, visit_date: visitDate });
     if (error) { toast({ title: 'Failed to mark visit', description: error.message, variant: 'destructive' }); return; }
-    toast({ title: 'Visit marked', description: `${membership.customer_name} — ${visitDate}` });
+    const newUsed = visits.length + 1;
+    const remaining = membership.total_shakes - newUsed;
+    if (remaining === 0) {
+      toast({ title: 'Membership complete!', description: `${membership.customer_name} has used all ${membership.total_shakes} shakes. Time to renew!` });
+    } else if (remaining === 1) {
+      toast({ title: 'Last shake remaining!', description: `${membership.customer_name} has only 1 shake left — remind them to renew.` });
+    } else {
+      toast({ title: 'Visit marked', description: `${membership.customer_name} — ${visitDate} (${remaining} shakes left)` });
+    }
     setVisitDateMap(prev => ({ ...prev, [membership.id]: today }));
     fetchData();
   };
@@ -633,6 +655,64 @@ export default function CenterPage() {
     fetchData();
   };
 
+  const fmtD = (d: string) => { if (!d) return '—'; const [y, mo, day] = d.split('-'); return `${day}/${mo}/${y}`; };
+
+  const printSingleMembershipReport = (m: CenterMembership) => {
+    const customerName = m.customer_name;
+    const allMemberships = memberships.filter(x => x.customer_name === customerName).sort((a, b) => a.start_date.localeCompare(b.start_date));
+    const totalPaid = allMemberships.filter(x => x.payment_status === 'paid').reduce((a, x) => a + x.price, 0);
+    const totalShakesAll = allMemberships.reduce((a, x) => a + x.total_shakes, 0);
+    const totalUsedAll = allMemberships.reduce((a, x) => a + membershipVisits.filter(v => v.membership_id === x.id).length, 0);
+    const membershipBlocks = allMemberships.map((mem, idx) => {
+      const visits = membershipVisits.filter(v => v.membership_id === mem.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+      const used = visits.length;
+      const remaining = mem.total_shakes - used;
+      const isComplete = used >= mem.total_shakes;
+      const lastVisit = visits[visits.length - 1]?.visit_date ?? '';
+      const durationDays = lastVisit ? Math.max(1, Math.ceil((new Date(lastVisit).getTime() - new Date(mem.start_date).getTime()) / 86400000) + 1) : 0;
+      const shakeCircles = Array.from({ length: mem.total_shakes }).map((_, i) => i < used ? `<span style="color:#16a34a;font-size:16px" title="${fmtD(visits[i]?.visit_date ?? '')}">&#10003;</span>` : `<span style="color:#d1d5db;font-size:16px">&#9675;</span>`).join(' ');
+      const visitPills = visits.map(v => `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 8px;border-radius:20px;margin:2px 2px 2px 0">${fmtD(v.visit_date)}</span>`).join('');
+      const isCurrent = mem.id === m.id;
+      return `<div style="border:${isCurrent ? '2px solid #3b82f6' : '1px solid #e5e7eb'};border-radius:10px;padding:16px 20px;margin-bottom:20px;${isCurrent ? 'background:#eff6ff' : ''}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">
+          <div>
+            <span style="font-size:12px;font-weight:700;color:#666;text-transform:uppercase;letter-spacing:.05em">Membership #${idx + 1}${isCurrent ? ' — Current' : ' — Past'}</span>
+            <p style="font-size:13px;margin-top:2px">Started: <strong>${fmtD(mem.start_date)}</strong>${mem.reference ? ` · Ref: ${mem.reference}` : ''}</p>
+            ${lastVisit ? `<p style="font-size:11px;color:#666;margin-top:2px">Duration: ${fmtD(mem.start_date)} → ${fmtD(lastVisit)} (${durationDays} days)</p>` : ''}
+          </div>
+          <div style="text-align:right">
+            <p style="font-size:16px;font-weight:700">&#8377;${mem.price.toFixed(2)}</p>
+            <span style="padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:${mem.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${mem.payment_status === 'paid' ? '#166534' : '#c2410c'}">${mem.payment_status === 'paid' ? 'Paid' : 'Pending'}</span>
+            &nbsp;<span style="padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;background:${isComplete ? '#f3f4f6' : '#dcfce7'};color:${isComplete ? '#374151' : '#166534'}">${isComplete ? 'Complete' : 'Active'}</span>
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span style="font-size:11px;color:#666;">Progress: ${used}/${mem.total_shakes} · Remaining: ${remaining}</span><br/>
+          <div style="letter-spacing:3px;margin-top:4px">${shakeCircles}</div>
+        </div>
+        <div>${visitPills || '<span style="color:#999;font-size:11px">No visits yet.</span>'}</div>
+        ${mem.comments ? `<p style="margin-top:8px;font-size:12px;color:#555;font-style:italic">💬 ${mem.comments}</p>` : ''}
+      </div>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Membership Report — ${customerName}</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:40px}h1{font-size:24px;margin-bottom:2px}.sub{color:#15803d;font-size:12px;margin-bottom:28px}.meta{display:flex;justify-content:space-between;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e5e7eb}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}.card{border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px}.card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:20px;font-weight:700}.footer{margin-top:40px;font-size:11px;color:#999;text-align:center;border-top:1px solid #e5e7eb;padding-top:16px}@media print{button{display:none}}</style></head><body>
+    <h1>Membership Report</h1><p class="sub">Herbalife Sales Manager</p>
+    <div class="meta">
+      <div><p style="font-size:22px;font-weight:700;margin-bottom:4px">${customerName}</p><p style="color:#666;font-size:12px">${allMemberships.length} membership${allMemberships.length !== 1 ? 's' : ''} total</p></div>
+      <div style="text-align:right"><p><strong>Manager:</strong> ${managerName}</p><p><strong>Generated:</strong> ${new Date().toLocaleString()}</p></div>
+    </div>
+    <div class="summary-grid">
+      <div class="card"><div class="label">Total Memberships</div><div class="value" style="color:#1d4ed8">${allMemberships.length}</div></div>
+      <div class="card"><div class="label">Total Paid</div><div class="value" style="color:#16a34a">&#8377;${totalPaid.toFixed(2)}</div></div>
+      <div class="card"><div class="label">Total Shakes</div><div class="value" style="color:#7c3aed">${totalShakesAll}</div></div>
+      <div class="card"><div class="label">Shakes Used</div><div class="value" style="color:#be123c">${totalUsedAll}</div></div>
+    </div>
+    ${membershipBlocks}
+    <div class="footer">Herbalife Sales Manager · ${customerName} · Full Membership History</div>
+    <script>window.onload=()=>{window.print()}<\/script></body></html>`;
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
   const printMembershipReport = () => {
     const totalMemberships = memberships.length;
     const totalRevenueMem = memberships.reduce((a, m) => a + m.price, 0);
@@ -642,9 +722,9 @@ export default function CenterPage() {
     const memberRows = memberships.map(m => {
       const visits = membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
       const used = visits.length; const remaining = m.total_shakes - used; const isComplete = used >= m.total_shakes;
-      const visitPills = visits.map(v => `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 7px;border-radius:20px;margin:2px 2px 2px 0">${v.visit_date}</span>`).join('');
-      const shakeCircles = Array.from({ length: m.total_shakes }).map((_, i) => i < used ? `<span style="color:#16a34a;font-size:14px" title="${visits[i]?.visit_date ?? ''}">&#10003;</span>` : `<span style="color:#d1d5db;font-size:14px">&#9675;</span>`).join(' ');
-      return `<tr><td><strong>${m.customer_name}</strong>${m.reference ? `<br/><span style="color:#666;font-size:11px">${m.reference}</span>` : ''}</td><td>${m.start_date}</td><td class="num">${shakeCircles}<br/><span style="font-size:11px;color:#555">${used}/${m.total_shakes}</span></td><td class="num">${remaining}</td><td class="num">&#8377;${m.price.toFixed(2)}</td><td style="text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${m.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${m.payment_status === 'paid' ? '#166534' : '#c2410c'}">${m.payment_status === 'paid' ? 'Paid' : 'Pending'}</span></td><td style="text-align:center">${isComplete ? '<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151">Complete</span>' : '<span style="color:#16a34a;font-size:11px">Active</span>'}</td><td>${visitPills || '<span style="color:#999;font-size:11px">No visits</span>'}</td></tr>`;
+      const visitPills = visits.map(v => `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 7px;border-radius:20px;margin:2px 2px 2px 0">${fmtD(v.visit_date)}</span>`).join('');
+      const shakeCircles = Array.from({ length: m.total_shakes }).map((_, i) => i < used ? `<span style="color:#16a34a;font-size:14px" title="${fmtD(visits[i]?.visit_date ?? '')}">&#10003;</span>` : `<span style="color:#d1d5db;font-size:14px">&#9675;</span>`).join(' ');
+      return `<tr><td><strong>${m.customer_name}</strong>${m.reference ? `<br/><span style="color:#666;font-size:11px">${m.reference}</span>` : ''}</td><td>${fmtD(m.start_date)}</td><td class="num">${shakeCircles}<br/><span style="font-size:11px;color:#555">${used}/${m.total_shakes}</span></td><td class="num">${remaining}</td><td class="num">&#8377;${m.price.toFixed(2)}</td><td style="text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${m.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${m.payment_status === 'paid' ? '#166534' : '#c2410c'}">${m.payment_status === 'paid' ? 'Paid' : 'Pending'}</span></td><td style="text-align:center">${isComplete ? '<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151">Complete</span>' : '<span style="color:#16a34a;font-size:11px">Active</span>'}</td><td>${visitPills || '<span style="color:#999;font-size:11px">No visits</span>'}</td></tr>`;
     }).join('');
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Membership Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px}h1{font-size:22px;margin-bottom:4px}.sub{color:#666;font-size:12px;margin-bottom:24px}.meta{display:flex;justify-content:space-between;margin-bottom:24px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}.card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px}.card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:18px;font-weight:700}table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px}th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:11px;border-bottom:2px solid #ddd}td{padding:7px 10px;border-bottom:1px solid #eee;vertical-align:top}.num{text-align:center}.footer{margin-top:40px;font-size:11px;color:#999;text-align:center}@media print{button{display:none}}</style></head><body>
     <h1>Membership Report</h1><p class="sub">Herbalife Sales Manager</p>
@@ -652,6 +732,29 @@ export default function CenterPage() {
     <div class="summary-grid"><div class="card"><div class="label">Total Members</div><div class="value" style="color:#1d4ed8">${totalMemberships}</div></div><div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#be123c">&#8377;${totalRevenueMem.toFixed(2)}</div></div><div class="card"><div class="label">Pending Payment</div><div class="value" style="color:#c2410c">&#8377;${pendingRev.toFixed(2)}</div><div class="label">${pendingCount} members</div></div><div class="card"><div class="label">Total Shakes Used</div><div class="value" style="color:#16a34a">${totalShakesUsed}</div></div></div>
     <table><thead><tr><th>Customer</th><th>Start Date</th><th class="num">Progress</th><th class="num">Remaining</th><th class="num">Price</th><th style="text-align:center">Payment</th><th style="text-align:center">Status</th><th>Visit Dates</th></tr></thead><tbody>${memberRows}</tbody></table>
     <div class="footer">Herbalife Sales Manager · Membership Report · Generated ${new Date().toLocaleString()}</div>
+    <script>window.onload=()=>{window.print()}<\/script></body></html>`;
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(html); win.document.close(); }
+  };
+
+  const printMembershipPeriodReport = (data: CenterMembership[], from: string, to: string) => {
+    const totalRevenuePeriod = data.reduce((a, m) => a + m.price, 0);
+    const pendingCount = data.filter(m => m.payment_status === 'pending').length;
+    const pendingRev = data.filter(m => m.payment_status === 'pending').reduce((a, m) => a + m.price, 0);
+    const totalShakesUsed = data.reduce((a, m) => a + membershipVisits.filter(v => v.membership_id === m.id).length, 0);
+    const memberRows = data.map(m => {
+      const visits = membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+      const used = visits.length; const remaining = m.total_shakes - used; const isComplete = used >= m.total_shakes;
+      const visitPills = visits.map(v => `<span style="display:inline-block;background:#dcfce7;color:#166534;font-size:10px;padding:2px 7px;border-radius:20px;margin:2px 2px 2px 0">${fmtD(v.visit_date)}</span>`).join('');
+      const shakeCircles = Array.from({ length: m.total_shakes }).map((_, i) => i < used ? `<span style="color:#16a34a;font-size:14px" title="${fmtD(visits[i]?.visit_date ?? '')}">&#10003;</span>` : `<span style="color:#d1d5db;font-size:14px">&#9675;</span>`).join(' ');
+      return `<tr><td><strong>${m.customer_name}</strong>${m.reference ? `<br/><span style="color:#666;font-size:11px">${m.reference}</span>` : ''}</td><td>${fmtD(m.start_date)}</td><td class="num">${shakeCircles}<br/><span style="font-size:11px;color:#555">${used}/${m.total_shakes}</span></td><td class="num">${remaining}</td><td class="num">&#8377;${m.price.toFixed(2)}</td><td style="text-align:center"><span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:${m.payment_status === 'paid' ? '#dcfce7' : '#fff7ed'};color:${m.payment_status === 'paid' ? '#166534' : '#c2410c'}">${m.payment_status === 'paid' ? 'Paid' : 'Pending'}</span></td><td style="text-align:center">${isComplete ? '<span style="padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;background:#f3f4f6;color:#374151">Complete</span>' : '<span style="color:#16a34a;font-size:11px">Active</span>'}</td><td>${visitPills || '<span style="color:#999;font-size:11px">No visits</span>'}</td></tr>`;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Membership Period Report</title><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;font-size:13px;color:#111;padding:32px}h1{font-size:22px;margin-bottom:4px}.sub{color:#15803d;font-size:12px;margin-bottom:24px}.meta{display:flex;justify-content:space-between;margin-bottom:24px}.summary-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:28px}.card{border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px}.card .label{font-size:10px;color:#666;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}.card .value{font-size:18px;font-weight:700}table{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px}th{background:#f4f4f4;text-align:left;padding:8px 10px;font-size:11px;border-bottom:2px solid #ddd}td{padding:7px 10px;border-bottom:1px solid #eee;vertical-align:top}.num{text-align:center}.footer{margin-top:40px;font-size:11px;color:#999;text-align:center}@media print{button{display:none}}</style></head><body>
+    <h1>Membership Period Report</h1><p class="sub">Herbalife Sales Manager</p>
+    <div class="meta"><div><strong>Total Members:</strong> ${data.length}<br/><strong>Shakes Used:</strong> ${totalShakesUsed}<br/><strong>Period:</strong> ${from ? fmtD(from) : 'All'} to ${to ? fmtD(to) : 'All'}</div><div style="text-align:right"><strong>Manager:</strong> ${managerName}<br/><strong>Generated:</strong> ${new Date().toLocaleString()}</div></div>
+    <div class="summary-grid"><div class="card"><div class="label">Total Members</div><div class="value" style="color:#1d4ed8">${data.length}</div></div><div class="card"><div class="label">Total Revenue</div><div class="value" style="color:#be123c">&#8377;${totalRevenuePeriod.toFixed(2)}</div></div><div class="card"><div class="label">Pending Payment</div><div class="value" style="color:#c2410c">&#8377;${pendingRev.toFixed(2)}</div><div class="label">${pendingCount} members</div></div><div class="card"><div class="label">Total Shakes Used</div><div class="value" style="color:#16a34a">${totalShakesUsed}</div></div></div>
+    <table><thead><tr><th>Customer</th><th>Start Date</th><th class="num">Progress</th><th class="num">Remaining</th><th class="num">Price</th><th style="text-align:center">Payment</th><th style="text-align:center">Status</th><th>Visit Dates</th></tr></thead><tbody>${memberRows}</tbody></table>
+    <div class="footer">Herbalife Sales Manager · Membership Period Report · ${from ? fmtD(from) : 'All'} to ${to ? fmtD(to) : 'All'}</div>
     <script>window.onload=()=>{window.print()}<\/script></body></html>`;
     const win = window.open('', '_blank');
     if (win) { win.document.write(html); win.document.close(); }
@@ -722,63 +825,6 @@ export default function CenterPage() {
                       </div>
                     )}
                     {!periodFrom && !periodTo && <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>}
-                  </div>
-                </DialogContent>
-              </Dialog>
-
-              {/* Customer Invoice */}
-              <Dialog open={customerInvoiceOpen} onOpenChange={(v) => { setCustomerInvoiceOpen(v); if (!v) setInvoiceCustomer(''); }}>
-                <DialogTrigger asChild>
-                  <Button variant="outline" className="gap-2"><Receipt className="h-4 w-4" />Invoice</Button>
-                </DialogTrigger>
-                <DialogContent className="max-w-lg">
-                  <DialogHeader><DialogTitle>Customer Invoice</DialogTitle></DialogHeader>
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Customer Name</Label>
-                      <Input placeholder="Type customer name..." value={invoiceCustomer} onChange={(e) => setInvoiceCustomer(e.target.value)} list="inv-cust" />
-                      <datalist id="inv-cust">{uniqueCustomers.map((c) => <option key={c} value={c} />)}</datalist>
-                    </div>
-                    {invoiceCustomer && customerInvoiceSales.length > 0 && (
-                      <div className="space-y-3">
-                        <div className="flex justify-end">
-                          <Button size="sm" variant="outline" className="gap-2" onClick={() => printCenterCustomerInvoice(customerInvoiceSales, invoiceCustomer, managerName)}>
-                            <Download className="h-4 w-4" />Download PDF
-                          </Button>
-                        </div>
-                        <div className="border rounded-lg overflow-hidden">
-                          <Table>
-                            <TableHeader><TableRow><TableHead>Product</TableHead><TableHead className="text-right">Qty</TableHead><TableHead className="text-right">Unit</TableHead><TableHead className="text-right">Total</TableHead><TableHead className="text-center">Status</TableHead></TableRow></TableHeader>
-                            <TableBody>
-                              {customerInvoiceSales.map((s) => (
-                                <TableRow key={s.id}>
-                                  <TableCell className="text-sm">{s.product_name}</TableCell>
-                                  <TableCell className="text-right text-sm">{s.quantity}</TableCell>
-                                  <TableCell className="text-right text-sm">{formatCurrency(s.fixed_price)}</TableCell>
-                                  <TableCell className="text-right text-sm font-medium">{formatCurrency(s.fixed_price * s.quantity)}</TableCell>
-                                  <TableCell className="text-center"><Badge variant={s.payment_status === 'done' ? 'success' : 'warning'}>{s.payment_status}</Badge></TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                        <div className="bg-muted p-3 rounded-lg space-y-1 text-sm">
-                          <div className="flex justify-between"><span>Total Revenue</span><span className="font-medium">{formatCurrency(customerInvoiceSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
-                          <div className="flex justify-between"><span className="text-emerald-600">Cash</span><span>{formatCurrency(customerInvoiceSales.filter(s => s.payment_method === 'cash').reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
-                          <div className="flex justify-between"><span className="text-blue-600">Online</span><span>{formatCurrency(customerInvoiceSales.filter(s => s.payment_method === 'online').reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>
-                          {customerInvoicePending.length > 0 && <div className="flex justify-between text-orange-500 font-bold border-t pt-1 mt-1"><span>Pending</span><span>{formatCurrency(customerInvoicePending.reduce((a, s) => a + s.fixed_price * s.quantity, 0))}</span></div>}
-                        </div>
-                        {customerInvoicePending.length > 0 ? (
-                          <div><p className="text-sm font-medium mb-2">{customerInvoicePending.length} pending. Mark as done:</p>
-                            <div className="flex gap-2">
-                              <Button size="sm" className="flex-1" onClick={() => handleMarkCustomerPaid('online')}>Online</Button>
-                              <Button size="sm" variant="outline" className="flex-1" onClick={() => handleMarkCustomerPaid('cash')}>Cash</Button>
-                            </div>
-                          </div>
-                        ) : <Badge variant="success" className="w-full justify-center py-1">All payments done</Badge>}
-                      </div>
-                    )}
-                    {invoiceCustomer && customerInvoiceSales.length === 0 && <p className="text-muted-foreground text-sm text-center py-4">No sales found for this customer.</p>}
                   </div>
                 </DialogContent>
               </Dialog>
@@ -1296,7 +1342,7 @@ export default function CenterPage() {
                             <TableCell className="text-right">{formatCurrency(m.price)}</TableCell>
                             <TableCell><Badge variant={m.payment_status === 'paid' ? 'default' : 'secondary'}>{m.payment_status === 'paid' ? 'Paid' : 'Pending'}</Badge></TableCell>
                             <TableCell className="text-sm">{formatDate(m.start_date)}</TableCell>
-                            <TableCell>{visits.length === 0 ? <span className="text-muted-foreground text-sm">No visits</span> : <div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded">{v.visit_date}</span>)}</div>}</TableCell>
+                            <TableCell>{visits.length === 0 ? <span className="text-muted-foreground text-sm">No visits</span> : <div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 px-1.5 py-0.5 rounded">{formatDate(v.visit_date)}</span>)}</div>}</TableCell>
                           </TableRow>
                         );
                       })}
@@ -1307,7 +1353,7 @@ export default function CenterPage() {
               </DialogContent>
             </Dialog>
 
-            <Button variant="outline" className="gap-2" onClick={printMembershipReport} disabled={memberships.length === 0}><Download className="h-4 w-4" />Download PDF</Button>
+            <Button variant="outline" className="gap-2" onClick={() => setMembershipPeriodOpen(true)}><FileText className="h-4 w-4" />Period Report</Button>
 
             <Dialog open={resetOpen} onOpenChange={(v) => { setResetOpen(v); if (!v) setResetConfirmText(''); }}>
               <DialogTrigger asChild><Button variant="outline" className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10 hover:text-destructive" disabled={memberships.length === 0}><RotateCcw className="h-4 w-4" />Reset</Button></DialogTrigger>
@@ -1348,14 +1394,23 @@ export default function CenterPage() {
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                         {group.active.map(({ membership: m, visits }) => {
                           const used = visits.length;
+                          const remaining = m.total_shakes - used;
                           const selectedDate = visitDateMap[m.id] ?? today;
                           const alreadyMarked = visits.some(v => v.visit_date === selectedDate);
                           return (
-                            <Card key={m.id}>
+                            <Card key={m.id} className={remaining === 1 ? 'border-orange-400 dark:border-orange-500' : remaining === 0 ? 'border-red-400 dark:border-red-500' : ''}>
+                              {remaining <= 1 && (
+                                <div className={`px-4 py-1.5 text-xs font-medium flex items-center gap-1.5 rounded-t-lg ${remaining === 0 ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>
+                                  <span>{remaining === 0 ? '🎯 Membership complete — renew now!' : '⚠️ Last shake remaining — remind to renew!'}</span>
+                                </div>
+                              )}
                               <CardHeader className="pb-3">
                                 <div className="flex items-start justify-between">
                                   <div>{m.reference && <p className="text-xs text-muted-foreground">{m.reference}</p>}<p className="text-xs text-muted-foreground mt-0.5">From {formatDate(m.start_date)}</p></div>
-                                  <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteMembership(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                  <div className="flex items-center gap-1">
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-muted-foreground" onClick={() => printSingleMembershipReport(m)}><Download className="h-3.5 w-3.5" /></Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => handleDeleteMembership(m.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                                  </div>
                                 </div>
                               </CardHeader>
                               <CardContent className="space-y-3">
@@ -1365,7 +1420,7 @@ export default function CenterPage() {
                                     {Array.from({ length: m.total_shakes }).map((_, i) => visits[i] ? <span key={i} title={`Visited: ${visits[i].visit_date}`} className="cursor-help"><CheckCircle2 className="h-5 w-5 text-green-500" /></span> : <Circle key={i} className="h-5 w-5 text-muted-foreground/25" />)}
                                   </div>
                                 </div>
-                                {visits.length > 0 && <div><p className="text-xs text-muted-foreground mb-1.5">Visit dates</p><div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 px-2 py-0.5 rounded-full">{v.visit_date}</span>)}</div></div>}
+                                {visits.length > 0 && <div><p className="text-xs text-muted-foreground mb-1.5">Visit dates</p><div className="flex flex-wrap gap-1">{visits.map(v => <span key={v.id} className="text-xs bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 px-2 py-0.5 rounded-full">{formatDate(v.visit_date)}</span>)}</div></div>}
                                 <div className="flex items-center justify-between pt-2 border-t">
                                   <div><p className="text-sm font-semibold">{formatCurrency(m.price)}</p><button className={`text-xs mt-0.5 hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`} onClick={() => handleTogglePayment(m)}>{m.payment_status === 'paid' ? '✓ Paid' : '⏳ Pending — tap to mark paid'}</button></div>
                                 </div>
@@ -1407,6 +1462,7 @@ export default function CenterPage() {
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-semibold">{formatCurrency(m.price)}</span>
                               <button className={`text-xs hover:underline ${m.payment_status === 'paid' ? 'text-green-600' : 'text-orange-500'}`} onClick={() => handleTogglePayment(m)}>{m.payment_status === 'paid' ? '✓' : '⏳'}</button>
+                              <Button size="icon" variant="ghost" className="h-6 w-6 text-muted-foreground" onClick={() => printSingleMembershipReport(m)}><Download className="h-3 w-3" /></Button>
                               <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive" onClick={() => handleDeleteMembership(m.id)}><Trash2 className="h-3 w-3" /></Button>
                             </div>
                           </div>
@@ -1417,6 +1473,78 @@ export default function CenterPage() {
                 ))}
               </div>
             )}
+
+          {/* Membership Period Report Modal */}
+          {membershipPeriodOpen && (
+            <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+                 onClick={() => { setMembershipPeriodOpen(false); setMembershipPeriodFrom(''); setMembershipPeriodTo(''); }}>
+              <div className="bg-background border rounded-lg p-6 w-full max-w-2xl shadow-lg relative max-h-[90vh] overflow-y-auto"
+                   onClick={(e) => e.stopPropagation()}>
+                <button onClick={() => { setMembershipPeriodOpen(false); setMembershipPeriodFrom(''); setMembershipPeriodTo(''); }}
+                        className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100 transition-opacity">
+                  <X className="h-4 w-4" />
+                </button>
+                <h2 className="text-lg font-semibold leading-none tracking-tight mb-4">Membership Period Report</h2>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label>From Date</Label><input type="date" className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" value={membershipPeriodFrom} onChange={(e) => setMembershipPeriodFrom(e.target.value)} /></div>
+                    <div className="space-y-2"><Label>To Date</Label><input type="date" className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" value={membershipPeriodTo} onChange={(e) => setMembershipPeriodTo(e.target.value)} /></div>
+                  </div>
+                  {(membershipPeriodFrom || membershipPeriodTo) && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Total Revenue</p><p className="text-lg font-bold text-blue-700 dark:text-blue-400">{formatCurrency(membershipPeriodRevenue)}</p></div>
+                        <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded-lg p-3"><p className="text-xs text-muted-foreground mb-1">Pending Amount</p><p className="text-lg font-bold text-orange-600 dark:text-orange-400">{formatCurrency(membershipPeriodPending)}</p></div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground">{membershipPeriodData.length} memberships · {membershipPeriodData.reduce((a, m) => a + m.total_shakes, 0)} total shakes</p>
+                        {membershipPeriodData.length > 0 && (
+                          <Button size="sm" variant="outline" className="gap-2" onClick={() => printMembershipPeriodReport(membershipPeriodData, membershipPeriodFrom, membershipPeriodTo)}>
+                            <Download className="h-4 w-4" />Download PDF
+                          </Button>
+                        )}
+                      </div>
+                      {membershipPeriodData.length > 0 ? (
+                        <div className="border rounded-lg overflow-hidden">
+                          <table className="w-full text-sm">
+                            <thead className="bg-muted/50">
+                              <tr>
+                                <th className="text-left px-3 py-2 text-xs font-medium">Customer</th>
+                                <th className="text-center px-3 py-2 text-xs font-medium">Shakes</th>
+                                <th className="text-center px-3 py-2 text-xs font-medium">Used</th>
+                                <th className="text-center px-3 py-2 text-xs font-medium">Duration</th>
+                                <th className="text-right px-3 py-2 text-xs font-medium">Price</th>
+                                <th className="text-center px-3 py-2 text-xs font-medium">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {membershipPeriodData.map(m => {
+                                const visits = membershipVisits.filter(v => v.membership_id === m.id).sort((a, b) => a.visit_date.localeCompare(b.visit_date));
+                                const used = visits.length;
+                                const lastVisit = visits[visits.length - 1]?.visit_date ?? today;
+                                const durationDays = Math.max(1, Math.ceil((new Date(lastVisit).getTime() - new Date(m.start_date).getTime()) / 86400000) + 1);
+                                return (
+                                  <tr key={m.id} className="border-t">
+                                    <td className="px-3 py-2 font-medium">{m.customer_name}{m.reference && <span className="ml-1 text-xs text-muted-foreground">· {m.reference}</span>}</td>
+                                    <td className="px-3 py-2 text-center">{m.total_shakes}</td>
+                                    <td className="px-3 py-2 text-center">{used}</td>
+                                    <td className="px-3 py-2 text-center text-xs text-muted-foreground">{formatDate(m.start_date)} → {used > 0 ? formatDate(lastVisit) : '—'}<br />{used > 0 ? `${durationDays}d` : '—'}</td>
+                                    <td className="px-3 py-2 text-right font-medium">{formatCurrency(m.price)}</td>
+                                    <td className="px-3 py-2 text-center"><span className={`text-xs px-1.5 py-0.5 rounded-full ${m.payment_status === 'paid' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' : 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>{m.payment_status === 'paid' ? 'Paid' : 'Pending'}</span></td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : <p className="text-center text-sm text-muted-foreground py-2">No memberships found in this period.</p>}
+                    </div>
+                  )}
+                  {!membershipPeriodFrom && !membershipPeriodTo && <p className="text-center text-sm text-muted-foreground py-4">Select dates above to preview the report.</p>}
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

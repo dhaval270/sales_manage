@@ -267,6 +267,7 @@ export interface Database {
           trunk_subcutaneous_fat_pct: number | null;
           arms_subcutaneous_fat_pct: number | null;
           legs_subcutaneous_fat_pct: number | null;
+          muscle_pct: number | null;
           is_daily_shake_member: boolean;
           is_distributor: boolean;
           notes: string | null;
@@ -293,6 +294,7 @@ export interface Database {
           trunk_subcutaneous_fat_pct?: number | null;
           arms_subcutaneous_fat_pct?: number | null;
           legs_subcutaneous_fat_pct?: number | null;
+          muscle_pct?: number | null;
           is_daily_shake_member?: boolean;
           is_distributor?: boolean;
           notes?: string | null;
@@ -319,6 +321,7 @@ export interface Database {
           trunk_subcutaneous_fat_pct?: number | null;
           arms_subcutaneous_fat_pct?: number | null;
           legs_subcutaneous_fat_pct?: number | null;
+          muscle_pct?: number | null;
           is_daily_shake_member?: boolean;
           is_distributor?: boolean;
           notes?: string | null;
@@ -342,6 +345,8 @@ export interface Database {
           trunk_subcutaneous_fat_pct: number | null;
           arms_subcutaneous_fat_pct: number | null;
           legs_subcutaneous_fat_pct: number | null;
+          muscle_pct: number | null;
+          age: number | null;
           created_at: string;
         };
         Insert: {
@@ -360,6 +365,8 @@ export interface Database {
           trunk_subcutaneous_fat_pct?: number | null;
           arms_subcutaneous_fat_pct?: number | null;
           legs_subcutaneous_fat_pct?: number | null;
+          muscle_pct?: number | null;
+          age?: number | null;
           created_at?: string;
         };
         Update: {
@@ -378,6 +385,8 @@ export interface Database {
           trunk_subcutaneous_fat_pct?: number | null;
           arms_subcutaneous_fat_pct?: number | null;
           legs_subcutaneous_fat_pct?: number | null;
+          muscle_pct?: number | null;
+          age?: number | null;
           created_at?: string;
         };
       };

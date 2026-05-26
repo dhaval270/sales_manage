@@ -68,7 +68,7 @@ export default function SettingsPage() {
     const { error } = await supabase.auth.updateUser({ password: data.password });
     setPasswordLoading(false);
     if (error) { toast({ title: 'Password change failed', description: error.message, variant: 'destructive' }); }
-    else { toast({ title: 'Password updated' }); resetPassword(); }
+    else { toast({ title: 'Password updated successfully' }); resetPassword(); }
   };
 
   const handleLogout = async () => {

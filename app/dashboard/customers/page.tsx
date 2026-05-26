@@ -63,10 +63,12 @@ interface HealthReadingEntry {
   _key: string;
   id?: number;
   reading_date: string;
+  age: string;
   height_cm: string; weight_kg: string; bmi: string; body_fat_pct: string;
   visceral_fat: string; bmr_kcal: string; body_age: string;
   subcutaneous_fat_pct: string; trunk_subcutaneous_fat_pct: string;
   arms_subcutaneous_fat_pct: string; legs_subcutaneous_fat_pct: string;
+  muscle_pct: string;
 }
 
 interface MembershipForm {
@@ -88,18 +90,31 @@ const emptyForm = (): CustomerForm => ({
   is_daily_shake_member: false, is_distributor: false, notes: '',
 });
 
+function calcAge(dob: string, onDate: string): string {
+  if (!dob || !onDate) return '';
+  const birth = new Date(dob);
+  const ref = new Date(onDate);
+  let age = ref.getFullYear() - birth.getFullYear();
+  const m = ref.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && ref.getDate() < birth.getDate())) age--;
+  return age >= 0 ? String(age) : '';
+}
+
 const emptyReading = (): HealthReadingEntry => ({
   _key: Math.random().toString(36).slice(2),
   reading_date: format(new Date(), 'yyyy-MM-dd'),
+  age: '',
   height_cm: '', weight_kg: '', bmi: '', body_fat_pct: '',
   visceral_fat: '', bmr_kcal: '', body_age: '',
   subcutaneous_fat_pct: '', trunk_subcutaneous_fat_pct: '',
   arms_subcutaneous_fat_pct: '', legs_subcutaneous_fat_pct: '',
+  muscle_pct: '',
 });
 
 const readingFromCustomer = (c: Customer): HealthReadingEntry => ({
   _key: Math.random().toString(36).slice(2),
   reading_date: c.created_at.slice(0, 10),
+  age: calcAge(c.date_of_birth ?? '', c.created_at.slice(0, 10)),
   height_cm: c.height_cm?.toString() ?? '',
   weight_kg: c.weight_kg?.toString() ?? '',
   bmi: c.bmi?.toString() ?? '',
@@ -111,12 +126,14 @@ const readingFromCustomer = (c: Customer): HealthReadingEntry => ({
   trunk_subcutaneous_fat_pct: c.trunk_subcutaneous_fat_pct?.toString() ?? '',
   arms_subcutaneous_fat_pct: c.arms_subcutaneous_fat_pct?.toString() ?? '',
   legs_subcutaneous_fat_pct: c.legs_subcutaneous_fat_pct?.toString() ?? '',
+  muscle_pct: c.muscle_pct?.toString() ?? '',
 });
 
 const dbReadingToEntry = (r: CustomerHealthReading): HealthReadingEntry => ({
   _key: r.id.toString(),
   id: r.id,
   reading_date: r.reading_date,
+  age: r.age?.toString() ?? '',
   height_cm: r.height_cm?.toString() ?? '',
   weight_kg: r.weight_kg?.toString() ?? '',
   bmi: r.bmi?.toString() ?? '',
@@ -128,6 +145,7 @@ const dbReadingToEntry = (r: CustomerHealthReading): HealthReadingEntry => ({
   trunk_subcutaneous_fat_pct: r.trunk_subcutaneous_fat_pct?.toString() ?? '',
   arms_subcutaneous_fat_pct: r.arms_subcutaneous_fat_pct?.toString() ?? '',
   legs_subcutaneous_fat_pct: r.legs_subcutaneous_fat_pct?.toString() ?? '',
+  muscle_pct: r.muscle_pct?.toString() ?? '',
 });
 
 const emptyMembership = (): MembershipForm => ({
@@ -209,36 +227,77 @@ function openPrintWindow(title: string, body: string) {
 
 // ─── Print: Health Readings Report ───────────────────────────────────────────
 function printHealthReport(customer: Customer, data: ReportData, managerName: string) {
-  const healthReadingsHtml = data.healthReadings.length > 0
-    ? data.healthReadings.map((r, i) => {
-        const rows = [
-          ['Height', r.height_cm ? `${r.height_cm} cm` : null],
-          ['Weight', r.weight_kg ? `${r.weight_kg} kg` : null],
-          ['BMI', r.bmi ? `${r.bmi} (Normal: 20–23)` : null],
-          ['Body Fat', r.body_fat_pct ? `${r.body_fat_pct}% (Normal: 14–24%)` : null],
-          ['Visceral Fat', r.visceral_fat ? `${r.visceral_fat} (Normal: 2–8)` : null],
-          ['BMR', r.bmr_kcal ? `${r.bmr_kcal} kcal (Normal: 1800–2000)` : null],
-          ['Body Age', r.body_age || null],
-          ['Subcutaneous Fat', r.subcutaneous_fat_pct ? `${r.subcutaneous_fat_pct}% (Normal: <20%)` : null],
-          ['Trunk Sub. Fat', r.trunk_subcutaneous_fat_pct ? `${r.trunk_subcutaneous_fat_pct}% (Normal: <15%)` : null],
-          ['Arms Sub. Fat', r.arms_subcutaneous_fat_pct ? `${r.arms_subcutaneous_fat_pct}% (Normal: <22%)` : null],
-          ['Legs Sub. Fat', r.legs_subcutaneous_fat_pct ? `${r.legs_subcutaneous_fat_pct}% (Normal: <20%)` : null],
-        ].filter(([, v]) => v !== null);
-        return `
-        <div style="margin-bottom:12px;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px">
-          <p style="font-size:12px;font-weight:600;color:#444;margin-bottom:8px">Reading ${i + 1} — ${r.reading_date}</p>
-          <div class="health-grid">${rows.map(([l, v]) => `<div class="health-item"><div class="hl">${l}</div><div class="hv">${v}</div></div>`).join('')}</div>
-        </div>`;
-      }).join('')
-    : '<p class="empty">No health readings recorded.</p>';
+  const tableStyles = `
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:16px}
+    .report-title{background:#2ecc71;color:#fff;text-align:center;font-size:16px;font-weight:700;padding:10px;border-radius:6px 6px 0 0}
+    .meta{font-size:11px;color:#555;margin:10px 0 8px;display:flex;justify-content:space-between}
+    .notes-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:8px 10px;font-size:11px;color:#555;margin-top:12px}
+    .footer{margin-top:16px;font-size:10px;color:#999;text-align:center;border-top:1px solid #eee;padding-top:10px}
+    table{width:100%;border-collapse:collapse;border:2px solid #e8a000}
+    thead tr.title-row th{background:#2ecc71;color:#fff;text-align:center;font-size:14px;font-weight:700;padding:8px;border:1px solid #2ecc71}
+    thead tr.header-row th{background:#f5a800;color:#111;text-align:center;font-size:10px;font-weight:700;padding:6px 4px;border:1px solid #e8a000;vertical-align:middle;line-height:1.3}
+    tbody tr td{text-align:center;padding:5px 4px;border:1px solid #e8a000;font-size:11px}
+    tbody tr:nth-child(even) td{background:#fffbe6}
+    @media print{button{display:none}body{padding:8px}}
+  `;
 
-  openPrintWindow(`Health Report — ${customer.full_name}`, `
-    ${buildCustomerHeader(customer, managerName)}
-    <h2>Health Readings (${data.healthReadings.length})</h2>
-    ${healthReadingsHtml}
-    ${customer.notes ? `<h2>Notes</h2><div class="notes-box">${customer.notes}</div>` : ''}
-    <div class="footer">Herbalife Sales Manager &nbsp;·&nbsp; Health Report &nbsp;·&nbsp; ${customer.full_name} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</div>
-  `);
+  const rowsHtml = data.healthReadings.length > 0
+    ? data.healthReadings.map(r => `
+        <tr>
+          <td>${r.reading_date}</td>
+          <td>${r.age ?? ''}</td>
+          <td>${r.height_cm ?? ''}</td>
+          <td>${r.weight_kg ?? ''}</td>
+          <td>${r.body_fat_pct ?? ''}</td>
+          <td>${r.visceral_fat ?? ''}</td>
+          <td>${r.bmr_kcal ?? ''}</td>
+          <td>${r.bmi ?? ''}</td>
+          <td>${r.body_age ?? ''}</td>
+          <td>${r.subcutaneous_fat_pct ?? ''}</td>
+          <td>${r.trunk_subcutaneous_fat_pct ?? ''}</td>
+          <td>${r.arms_subcutaneous_fat_pct ?? ''}</td>
+          <td>${r.legs_subcutaneous_fat_pct ?? ''}</td>
+          <td>${r.muscle_pct ?? ''}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="14" style="text-align:center;color:#999;padding:16px">No health readings recorded.</td></tr>`;
+
+  const html = `<!DOCTYPE html><html>
+<head><meta charset="utf-8"/><title>Health Report — ${customer.full_name}</title><style>${tableStyles}</style></head>
+<body>
+  <div class="meta">
+    <span><strong>${customer.full_name}</strong>${customer.phone ? ' · ' + customer.phone : ''}${customer.date_of_birth ? ' · DOB: ' + customer.date_of_birth : ''}${customer.gender ? ' · ' + customer.gender : ''}</span>
+    <span><strong>Manager:</strong> ${managerName} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</span>
+  </div>
+  <table>
+    <thead>
+      <tr class="title-row"><th colspan="14">My Fat Analysis Report</th></tr>
+      <tr class="header-row">
+        <th>Date</th>
+        <th>Age</th>
+        <th>Height</th>
+        <th>Weight</th>
+        <th>Body Fat<br/>M:14-17%<br/>F:21-24%</th>
+        <th>Visceral Fat<br/>2 to 8</th>
+        <th>BMR<br/>1800 to 2000</th>
+        <th>BMI<br/>20 to 23</th>
+        <th>Body Age</th>
+        <th>Subcutaneous<br/>Fat</th>
+        <th>Trunk Body<br/>Subcutaneous Fat<br/>Less Than 20%</th>
+        <th>Arms<br/>Less than 22%</th>
+        <th>Legs<br/>Less than 20%</th>
+        <th>Muscle<br/>M:33-36%<br/>F:30-33%</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+  ${customer.notes ? `<div class="notes-box"><strong>Notes:</strong> ${customer.notes}</div>` : ''}
+  <div class="footer">Herbalife Sales Manager &nbsp;·&nbsp; Health Report &nbsp;·&nbsp; ${customer.full_name} &nbsp;·&nbsp; ${new Date().toLocaleDateString()}</div>
+  <script>window.onload=()=>{window.print();}<\/script>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
 }
 
 // ─── Print: History Report (Sales + Center + Memberships) ────────────────────
@@ -340,7 +399,7 @@ function printHistoryReport(customer: Customer, data: ReportData, managerName: s
 
 // ─── Health Reading Card ──────────────────────────────────────────────────────
 function HealthReadingCard({
-  reading, index, total, onChange, onDelete, collapsed, onToggleCollapse,
+  reading, index, total, onChange, onDelete, collapsed, onToggleCollapse, dateOfBirth,
 }: {
   reading: HealthReadingEntry;
   index: number;
@@ -349,6 +408,7 @@ function HealthReadingCard({
   onDelete: () => void;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  dateOfBirth?: string;
 }) {
   return (
     <div className="rounded-lg border overflow-hidden">
@@ -376,25 +436,36 @@ function HealthReadingCard({
 
       {!collapsed && (
         <div className="p-3 space-y-3">
-          <div className="space-y-1">
-            <Label className="text-sm">Date of Reading <span className="text-destructive">*</span></Label>
-            <Input type="date" value={reading.reading_date} onChange={(e) => onChange('reading_date', e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-sm">Date of Reading <span className="text-destructive">*</span></Label>
+              <Input type="date" value={reading.reading_date} onChange={(e) => {
+                onChange('reading_date', e.target.value);
+                if (dateOfBirth) onChange('age', calcAge(dateOfBirth, e.target.value));
+              }} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm">Age (years)</Label>
+              <Input type="number" step="1" placeholder="—" value={reading.age} onChange={(e) => onChange('age', e.target.value)} />
+              {dateOfBirth && <p className="text-xs text-muted-foreground">Auto from DOB</p>}
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <HealthField label="Height (cm)" value={reading.height_cm} onChange={(v) => onChange('height_cm', v)} placeholder="165" />
             <HealthField label="Weight (kg)" value={reading.weight_kg} onChange={(v) => onChange('weight_kg', v)} placeholder="70.5" />
-            <HealthField label="BMI" normal="20–23" value={reading.bmi} onChange={(v) => onChange('bmi', v)} placeholder="22.5" />
-            <HealthField label="Body Fat (%)" normal="14–24%" value={reading.body_fat_pct} onChange={(v) => onChange('body_fat_pct', v)} placeholder="25.0" />
+            <HealthField label="Body Fat (%)" normal="M: 14–17%  F: 21–24%" value={reading.body_fat_pct} onChange={(v) => onChange('body_fat_pct', v)} placeholder="25.0" />
             <HealthField label="Visceral Fat" normal="2–8" value={reading.visceral_fat} onChange={(v) => onChange('visceral_fat', v)} placeholder="5" />
             <HealthField label="BMR (kcal)" normal="1800–2000" value={reading.bmr_kcal} onChange={(v) => onChange('bmr_kcal', v)} placeholder="1850" />
+            <HealthField label="BMI" normal="20–23" value={reading.bmi} onChange={(v) => onChange('bmi', v)} placeholder="22.5" />
             <div className="space-y-1">
               <Label className="text-sm">Body Age</Label>
               <Input placeholder="—" value={reading.body_age} onChange={(e) => onChange('body_age', e.target.value)} />
             </div>
             <HealthField label="Subcutaneous Fat (%)" normal="< 20%" value={reading.subcutaneous_fat_pct} onChange={(v) => onChange('subcutaneous_fat_pct', v)} placeholder="18" />
-            <HealthField label="Trunk Subcutaneous Fat (%)" normal="< 15%" value={reading.trunk_subcutaneous_fat_pct} onChange={(v) => onChange('trunk_subcutaneous_fat_pct', v)} placeholder="12" />
+            <HealthField label="Trunk Subcutaneous Fat (%)" normal="< 20%" value={reading.trunk_subcutaneous_fat_pct} onChange={(v) => onChange('trunk_subcutaneous_fat_pct', v)} placeholder="12" />
             <HealthField label="Arms Subcutaneous Fat (%)" normal="< 22%" value={reading.arms_subcutaneous_fat_pct} onChange={(v) => onChange('arms_subcutaneous_fat_pct', v)} placeholder="20" />
             <HealthField label="Legs Subcutaneous Fat (%)" normal="< 20%" value={reading.legs_subcutaneous_fat_pct} onChange={(v) => onChange('legs_subcutaneous_fat_pct', v)} placeholder="18" />
+            <HealthField label="Muscle (%)" normal="M: 33–36%  F: 30–33%" value={reading.muscle_pct} onChange={(v) => onChange('muscle_pct', v)} placeholder="34.0" />
           </div>
         </div>
       )}
@@ -408,6 +479,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [referSearch, setReferSearch] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
   const [form, setForm] = useState<CustomerForm>(emptyForm());
@@ -477,14 +549,15 @@ export default function CustomersPage() {
       filterType === 'active' ? c.status === 'active' :
       filterType === 'shake_member' ? c.is_daily_shake_member :
       c.is_distributor;
-    return matchesSearch && matchesFilter;
+    const matchesRefer = !referSearch.trim() || (c.referred_by ?? '').toLowerCase().includes(referSearch.trim().toLowerCase());
+    return matchesSearch && matchesFilter && matchesRefer;
   });
 
   const openAdd = () => {
     setEditCustomer(null);
     setForm(emptyForm());
     const r = emptyReading();
-    setHealthReadings([r]);
+    setHealthReadings([r]); // age populated after DOB entered
     setDeletedReadingIds([]);
     setCollapsedReadings(new Set());
     setMembership(emptyMembership());
@@ -509,7 +582,11 @@ export default function CustomersPage() {
     const supabase = createClient();
     const { data: dbReadings } = await supabase.from('customer_health_readings').select('*').eq('customer_id', c.id).order('reading_date', { ascending: true });
     if (dbReadings && dbReadings.length > 0) {
-      const entries = dbReadings.map(dbReadingToEntry);
+      const entries = dbReadings.map(r => {
+        const entry = dbReadingToEntry(r);
+        if (!entry.age && c.date_of_birth) entry.age = calcAge(c.date_of_birth, entry.reading_date);
+        return entry;
+      });
       setHealthReadings(entries);
       // Collapse all except the last (most recent)
       const collapsed = new Set(entries.slice(0, -1).map(e => e._key));
@@ -530,8 +607,12 @@ export default function CustomersPage() {
     setDialogOpen(true);
   };
 
-  const setField = <K extends keyof CustomerForm>(key: K, value: CustomerForm[K]) =>
+  const setField = <K extends keyof CustomerForm>(key: K, value: CustomerForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === 'date_of_birth' && typeof value === 'string') {
+      setHealthReadings(prev => prev.map(r => ({ ...r, age: calcAge(value, r.reading_date) })));
+    }
+  };
 
   const setMemField = <K extends keyof MembershipForm>(key: K, value: MembershipForm[K]) =>
     setMembership((prev) => ({ ...prev, [key]: value }));
@@ -542,8 +623,8 @@ export default function CustomersPage() {
 
   const addReading = () => {
     const r = emptyReading();
+    if (form.date_of_birth) r.age = calcAge(form.date_of_birth, r.reading_date);
     setHealthReadings(prev => {
-      // Collapse all existing readings
       setCollapsedReadings(new Set(prev.map(p => p._key)));
       return [...prev, r];
     });
@@ -587,6 +668,7 @@ export default function CustomersPage() {
       trunk_subcutaneous_fat_pct: numOrNull(latest?.trunk_subcutaneous_fat_pct ?? ''),
       arms_subcutaneous_fat_pct: numOrNull(latest?.arms_subcutaneous_fat_pct ?? ''),
       legs_subcutaneous_fat_pct: numOrNull(latest?.legs_subcutaneous_fat_pct ?? ''),
+      muscle_pct: numOrNull(latest?.muscle_pct ?? ''),
       is_daily_shake_member: form.is_daily_shake_member, is_distributor: form.is_distributor,
       notes: form.notes.trim() || null,
     };
@@ -625,6 +707,8 @@ export default function CustomersPage() {
         trunk_subcutaneous_fat_pct: numOrNull(r.trunk_subcutaneous_fat_pct),
         arms_subcutaneous_fat_pct: numOrNull(r.arms_subcutaneous_fat_pct),
         legs_subcutaneous_fat_pct: numOrNull(r.legs_subcutaneous_fat_pct),
+        muscle_pct: numOrNull(r.muscle_pct),
+        age: numOrNull(r.age),
       };
       if (r.id) {
         await supabase.from('customer_health_readings').update(readingPayload).eq('id', r.id);
@@ -665,6 +749,18 @@ export default function CustomersPage() {
   const active = customers.filter(c => c.status === 'active').length;
   const shakeMembers = customers.filter(c => c.is_daily_shake_member).length;
   const distributors = customers.filter(c => c.is_distributor).length;
+
+  // Map: customer full_name → list of customers they referred
+  const referralMap = customers.reduce((map, c) => {
+    if (c.referred_by?.trim()) {
+      const key = c.referred_by.trim().toLowerCase();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(c);
+    }
+    return map;
+  }, new Map<string, Customer[]>());
+
+  const getReferrals = (name: string) => referralMap.get(name.trim().toLowerCase()) ?? [];
 
   const showMembershipForm =
     (!editCustomer && form.is_daily_shake_member) ||
@@ -713,14 +809,25 @@ export default function CustomersPage() {
       </div>
 
       {/* Search */}
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input placeholder="Search by name or phone..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
-        {search && (
-          <button className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setSearch('')}>
-            <X className="h-4 w-4" />
-          </button>
-        )}
+      <div className="flex flex-wrap gap-3">
+        <div className="relative max-w-sm flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Search by name or phone..." className="pl-9" value={search} onChange={(e) => setSearch(e.target.value)} />
+          {search && (
+            <button className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setSearch('')}>
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+        <div className="relative max-w-sm flex-1 min-w-[200px]">
+          <Users className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input placeholder="Filter by referred by..." className="pl-9" value={referSearch} onChange={(e) => setReferSearch(e.target.value)} />
+          {referSearch && (
+            <button className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setReferSearch('')}>
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Customer cards */}
@@ -763,6 +870,16 @@ export default function CustomersPage() {
                   {c.is_distributor && <Badge className="text-xs bg-purple-100 text-purple-700 border-purple-200">Distributor</Badge>}
                 </div>
 
+                {getReferrals(c.full_name).length > 0 && (
+                  <div className="mt-1.5">
+                    <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
+                      <Users className="h-3 w-3" />Referred {getReferrals(c.full_name).length}
+                    </Badge>
+                  </div>
+                )}
+                {c.referred_by && (
+                  <p className="text-xs text-muted-foreground mt-1">Ref by: <span className="font-medium">{c.referred_by}</span></p>
+                )}
                 {(c.weight_kg || c.bmi || c.body_fat_pct) && (
                   <div className="flex gap-3 mt-2 text-xs text-muted-foreground">
                     {c.weight_kg && <span>Weight: <strong>{c.weight_kg} kg</strong></span>}
@@ -869,17 +986,19 @@ export default function CustomersPage() {
                       <div className="space-y-3">
                         {reportData.healthReadings.map((r, i) => {
                           const fields = [
+                            ['Age', r.age ? `${r.age} yrs` : null],
                             ['Height', r.height_cm ? `${r.height_cm} cm` : null],
                             ['Weight', r.weight_kg ? `${r.weight_kg} kg` : null],
-                            ['BMI', r.bmi ? String(r.bmi) : null, '20–23'],
-                            ['Body Fat', r.body_fat_pct ? `${r.body_fat_pct}%` : null, '14–24%'],
+                            ['Body Fat', r.body_fat_pct ? `${r.body_fat_pct}%` : null, 'M:14–17% F:21–24%'],
                             ['Visceral Fat', r.visceral_fat ? String(r.visceral_fat) : null, '2–8'],
                             ['BMR', r.bmr_kcal ? `${r.bmr_kcal} kcal` : null, '1800–2000'],
+                            ['BMI', r.bmi ? String(r.bmi) : null, '20–23'],
                             ['Body Age', r.body_age || null],
                             ['Subcutaneous Fat', r.subcutaneous_fat_pct ? `${r.subcutaneous_fat_pct}%` : null, '<20%'],
-                            ['Trunk Sub. Fat', r.trunk_subcutaneous_fat_pct ? `${r.trunk_subcutaneous_fat_pct}%` : null, '<15%'],
+                            ['Trunk Sub. Fat', r.trunk_subcutaneous_fat_pct ? `${r.trunk_subcutaneous_fat_pct}%` : null, '<20%'],
                             ['Arms Sub. Fat', r.arms_subcutaneous_fat_pct ? `${r.arms_subcutaneous_fat_pct}%` : null, '<22%'],
                             ['Legs Sub. Fat', r.legs_subcutaneous_fat_pct ? `${r.legs_subcutaneous_fat_pct}%` : null, '<20%'],
+                            ['Muscle', r.muscle_pct ? `${r.muscle_pct}%` : null, 'M:33–36% F:30–33%'],
                           ].filter(([, v]) => v !== null);
                           return (
                             <div key={r.id} className="rounded-lg border p-3 space-y-2">
@@ -1056,6 +1175,46 @@ export default function CustomersPage() {
                     )}
                   </div>
 
+                  {/* Referrals by this customer */}
+                  {(() => {
+                    const refs = getReferrals(reportCustomer.full_name);
+                    if (refs.length === 0) return null;
+                    return (
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+                          Customers Referred by {reportCustomer.full_name} &nbsp;
+                          <span className="font-normal normal-case">{refs.length} people</span>
+                        </p>
+                        <div className="rounded-md border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Name</TableHead>
+                                <TableHead>Phone</TableHead>
+                                <TableHead>Status</TableHead>
+                                <TableHead>Joined</TableHead>
+                                <TableHead>Health Problem</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {refs.map(r => (
+                                <TableRow key={r.id}>
+                                  <TableCell className="font-medium text-sm">{r.full_name}</TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">{r.phone ?? '—'}</TableCell>
+                                  <TableCell>
+                                    <Badge variant={r.status === 'active' ? 'success' : 'secondary'} className="text-xs">{r.status}</Badge>
+                                  </TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">{formatDate(r.created_at)}</TableCell>
+                                  <TableCell className="text-sm text-muted-foreground">{r.health_problem ?? '—'}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Notes */}
                   {reportCustomer.notes && (
                     <div>
@@ -1161,6 +1320,7 @@ export default function CustomersPage() {
                     onDelete={() => deleteReading(r._key)}
                     collapsed={collapsedReadings.has(r._key)}
                     onToggleCollapse={() => toggleCollapse(r._key)}
+                    dateOfBirth={form.date_of_birth || undefined}
                   />
                 ))}
               </div>

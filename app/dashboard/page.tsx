@@ -33,7 +33,7 @@ export default async function DashboardPage() {
     supabase.from('sales').select('retail_price, quantity').eq('user_id', user.id).eq('date', today),
     supabase.from('center_sales').select('fixed_price, quantity').eq('user_id', user.id).eq('date', today),
     supabase.from('inventory').select('quantity').eq('user_id', user.id),
-    supabase.from('sales').select('id').eq('user_id', user.id).eq('payment_status', 'pending'),
+    supabase.from('sales').select('retail_price, quantity').eq('user_id', user.id).eq('payment_status', 'pending'),
     supabase.from('sales').select('id, date, customer_name, product_name, retail_price, comments').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
     supabase.from('center_sales').select('id, date, customer_name, product_name, fixed_price').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
     supabase.from('customers').select('id, full_name, phone, date_of_birth').eq('user_id', user.id).not('date_of_birth', 'is', null),
@@ -56,6 +56,7 @@ export default async function DashboardPage() {
   const todaySalesRevenue = (todaySales ?? []).reduce((acc, s) => acc + s.retail_price * s.quantity, 0);
   const todayCenterRevenue = (todayCenterSales ?? []).reduce((acc, s) => acc + s.fixed_price * s.quantity, 0);
   const totalInventoryQty = (inventoryItems ?? []).reduce((acc, i) => acc + i.quantity, 0);
+  const pendingAmount = (pendingSales ?? []).reduce((acc, s) => acc + s.retail_price * s.quantity, 0);
 
   const stats = [
     {
@@ -83,9 +84,9 @@ export default async function DashboardPage() {
       bg: 'bg-purple-50',
     },
     {
-      title: 'Pending Payments',
-      value: (pendingSales?.length ?? 0).toString(),
-      sub: 'awaiting payment',
+      title: 'Pending Amount',
+      value: formatCurrency(pendingAmount),
+      sub: `${pendingSales?.length ?? 0} pending payment${(pendingSales?.length ?? 0) !== 1 ? 's' : ''}`,
       icon: Clock,
       color: 'text-orange-600',
       bg: 'bg-orange-50',
