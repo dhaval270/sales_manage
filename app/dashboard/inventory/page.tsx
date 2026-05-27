@@ -774,6 +774,31 @@ export default function InventoryPage() {
         </button>
       </div>
 
+      {/* Low stock reminder banner */}
+      {!loading && (() => {
+        const lowStockItems = (activeTab === 'sales' ? stockRemaining : centerStockRemaining)
+          .filter(r => r.remaining <= 3 && r.remaining > 0);
+        const outOfStockItems = (activeTab === 'sales' ? stockRemaining : centerStockRemaining)
+          .filter(r => r.remaining <= 0);
+        if (outOfStockItems.length === 0 && lowStockItems.length === 0) return null;
+        return (
+          <div className="space-y-2">
+            {outOfStockItems.length > 0 && (
+              <div className="flex items-start gap-2.5 px-4 py-3 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+                <svg className="h-4 w-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span><strong>{outOfStockItems.length} item(s) out of stock:</strong> {outOfStockItems.map(r => r.product).join(', ')}</span>
+              </div>
+            )}
+            {lowStockItems.length > 0 && (
+              <div className="flex items-start gap-2.5 px-4 py-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-700 dark:text-amber-400">
+                <svg className="h-4 w-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                <span><strong>{lowStockItems.length} item(s) need restocking:</strong> {lowStockItems.map(r => r.product).join(', ')}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ───── SALES TAB ───── */}
       {activeTab === 'sales' && (
         <div className="space-y-6">
@@ -985,19 +1010,6 @@ export default function InventoryPage() {
       {/* ───── CENTER TAB ───── */}
       {activeTab === 'center' && (
         <div className="space-y-6">
-          {/* Center Sales link banner */}
-          <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-            <div>
-              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">Center stock auto-reduces from Center Sales records</p>
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">Product names must match center sales entries for auto-deduction to work</p>
-            </div>
-            <Link href="/dashboard/center">
-              <Button variant="outline" size="sm" className="gap-1.5 border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-300">
-                <ExternalLink className="h-3.5 w-3.5" />Center Sales
-              </Button>
-            </Link>
-          </div>
-
           {/* Date filters */}
           <Card>
             <CardContent className="pt-4 pb-3">
