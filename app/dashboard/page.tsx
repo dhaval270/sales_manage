@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatCurrency, formatDate } from '@/lib/utils';
-import { DollarSign, Package, ShoppingCart, Clock, Cake } from 'lucide-react';
+import { DollarSign, Package, ShoppingCart, Clock, Cake, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 
 export default async function DashboardPage() {
@@ -22,21 +22,25 @@ export default async function DashboardPage() {
   const [
     { data: profile },
     { data: todaySales },
-    { data: todayCenterSales },
     { data: inventoryItems },
     { data: pendingSales },
     { data: recentSales },
     { data: recentCenterSales },
     { data: allCustomers },
+    { data: allMemberships },
+    { data: allVisits },
+    { data: todayMemberships },
   ] = await Promise.all([
     supabase.from('profiles').select('first_name').eq('id', user.id).single(),
     supabase.from('sales').select('retail_price, quantity').eq('user_id', user.id).eq('date', today),
-    supabase.from('center_sales').select('fixed_price, quantity').eq('user_id', user.id).eq('date', today),
     supabase.from('inventory').select('quantity').eq('user_id', user.id),
     supabase.from('sales').select('retail_price, quantity').eq('user_id', user.id).eq('payment_status', 'pending'),
     supabase.from('sales').select('id, date, customer_name, product_name, retail_price, comments').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
     supabase.from('center_sales').select('id, date, customer_name, product_name, fixed_price').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
     supabase.from('customers').select('id, full_name, phone, date_of_birth').eq('user_id', user.id).not('date_of_birth', 'is', null),
+    supabase.from('center_memberships').select('id, customer_name, customer_phone, total_shakes').eq('user_id', user.id),
+    supabase.from('center_membership_visits').select('membership_id').eq('user_id', user.id),
+    supabase.from('center_memberships').select('price').eq('user_id', user.id).eq('start_date', today).eq('payment_status', 'paid'),
   ]);
 
   // Match customers whose birthday month-day falls in the window
@@ -53,8 +57,16 @@ export default async function DashboardPage() {
     })
     .sort((a, b) => (b.isToday ? 1 : 0) - (a.isToday ? 1 : 0));
 
+  // Membership renewal reminders
+  const visitCounts = (allVisits ?? []).reduce((acc, v) => {
+    acc[v.membership_id] = (acc[v.membership_id] ?? 0) + 1;
+    return acc;
+  }, {} as Record<number, number>);
+
+  const lastShakeMembers = (allMemberships ?? []).filter(m => (m.total_shakes - (visitCounts[m.id] ?? 0)) === 1);
+
   const todaySalesRevenue = (todaySales ?? []).reduce((acc, s) => acc + s.retail_price * s.quantity, 0);
-  const todayCenterRevenue = (todayCenterSales ?? []).reduce((acc, s) => acc + s.fixed_price * s.quantity, 0);
+  const todayCenterRevenue = (todayMemberships ?? []).reduce((acc, m) => acc + m.price, 0);
   const totalInventoryQty = (inventoryItems ?? []).reduce((acc, i) => acc + i.quantity, 0);
   const pendingAmount = (pendingSales ?? []).reduce((acc, s) => acc + s.retail_price * s.quantity, 0);
 
@@ -70,7 +82,7 @@ export default async function DashboardPage() {
     {
       title: "Today's Center Revenue",
       value: formatCurrency(todayCenterRevenue),
-      sub: `${todayCenterSales?.length ?? 0} customers served`,
+      sub: `${todayMemberships?.length ?? 0} paid membership${(todayMemberships?.length ?? 0) !== 1 ? 's' : ''} today`,
       icon: ShoppingCart,
       color: 'text-green-600',
       bg: 'bg-green-50',
@@ -131,6 +143,34 @@ export default async function DashboardPage() {
                   </p>
                 </div>
                 {c.isToday && <span className="text-lg ml-1">🎉</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Membership renewal reminders */}
+      {lastShakeMembers.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="h-5 w-5 text-amber-500" />
+            <p className="font-semibold text-sm text-amber-700 dark:text-amber-300">
+              Membership Renewal Reminders
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {lastShakeMembers.map((m) => (
+              <div key={m.id} className="flex items-center gap-3 rounded-lg px-3 py-2 bg-amber-100 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700">
+                <div className="h-8 w-8 rounded-full bg-amber-400 text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
+                  {m.customer_name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <p className="text-sm font-semibold leading-tight">{m.customer_name}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    ⚠️ Last shake remaining — remind to renew!
+                    {m.customer_phone && <span> · {m.customer_phone}</span>}
+                  </p>
+                </div>
               </div>
             ))}
           </div>

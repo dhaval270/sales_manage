@@ -106,6 +106,98 @@ function groupCenterSales(sales: CenterSale[]): CenterSaleGroup[] {
 
 // ─── Print helpers ────────────────────────────────────────────────────────────
 
+function printCenterInvoice(group: CenterSaleGroup, managerName: string) {
+  const rows = group.items.map((s) => {
+    const totalMy = (s.my_price ?? 0) * s.quantity;
+    const totalSelling = s.fixed_price * s.quantity;
+    const profit = s.payment_status === 'done' ? totalSelling - totalMy : null;
+    return `
+    <tr>
+      <td>${s.product_name}</td>
+      <td class="num">${s.quantity}</td>
+      <td class="num">₹${(s.my_price ?? 0).toFixed(2)}</td>
+      <td class="num">₹${s.fixed_price.toFixed(2)}</td>
+      <td class="num">₹${totalMy.toFixed(2)}</td>
+      <td class="num">₹${totalSelling.toFixed(2)}</td>
+      <td class="num" style="${profit !== null ? 'color:#16a34a;font-weight:600' : 'color:#999'}">${profit !== null ? `₹${profit.toFixed(2)}` : '—'}</td>
+      <td class="num">${(s.volume_points ?? 0) > 0 ? `${((s.volume_points ?? 0) * s.quantity).toFixed(2)}` : '—'}</td>
+      <td class="num status-${s.payment_status}">${s.payment_status}</td>
+      <td class="num">${s.payment_method ?? '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Invoice – ${group.customer_name}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 13px; color: #111; padding: 32px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #666; font-size: 12px; margin-bottom: 24px; }
+    .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+    .meta div { line-height: 1.8; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
+    th { background: #f4f4f4; text-align: left; padding: 8px 10px; font-size: 12px; border-bottom: 2px solid #ddd; }
+    td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+    .num { text-align: right; }
+    .totals { margin-left: auto; width: 260px; }
+    .totals tr td { border: none; padding: 4px 10px; }
+    .totals tr:last-child td { font-weight: bold; font-size: 14px; border-top: 2px solid #111; padding-top: 8px; }
+    .status-done { color: #16a34a; font-weight: 600; }
+    .status-pending { color: #d97706; font-weight: 600; }
+    .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+    @media print { button { display: none; } }
+  </style>
+</head>
+<body>
+  <h1>Center Sales Invoice</h1>
+  <p class="sub">Herbalife Sales Manager</p>
+  <div class="meta">
+    <div>
+      <strong>Bill To:</strong><br/>
+      ${group.customer_name}<br/>
+      ${group.customer_phone ? group.customer_phone + '<br/>' : ''}
+      ${group.reference ? `Ref: ${group.reference}` : ''}
+    </div>
+    <div style="text-align:right">
+      <strong>Date:</strong> ${group.date.split('-').reverse().join('/')}<br/>
+      <strong>Manager:</strong> ${managerName}
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Product</th>
+        <th class="num">Qty</th>
+        <th class="num">My Price</th>
+        <th class="num">Selling Price</th>
+        <th class="num">Total My</th>
+        <th class="num">Total Selling</th>
+        <th class="num">Profit</th>
+        <th class="num">VP</th>
+        <th class="num">Status</th>
+        <th class="num">Method</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <table class="totals">
+    <tr><td>Subtotal</td><td class="num">₹${group.totalAmount.toFixed(2)}</td></tr>
+    ${group.pendingAmount > 0 ? `<tr><td style="color:#d97706">Pending</td><td class="num" style="color:#d97706">₹${group.pendingAmount.toFixed(2)}</td></tr>` : ''}
+    ${group.totalVP > 0 ? `<tr><td style="color:#7c3aed">Total Volume Points</td><td class="num" style="color:#7c3aed">${group.totalVP.toFixed(2)} VP</td></tr>` : ''}
+    <tr><td>Total</td><td class="num">₹${group.totalAmount.toFixed(2)}</td></tr>
+  </table>
+  <div class="footer">Generated on ${new Date().toLocaleString()} · Herbalife Sales Manager</div>
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank');
+  if (win) { win.document.write(html); win.document.close(); }
+}
+
 function printCenterCustomerInvoice(customerSales: CenterSale[], customerName: string, managerName: string) {
   const totalRevenue = customerSales.reduce((a, s) => a + s.fixed_price * s.quantity, 0);
   const totalPending = customerSales.filter((s) => s.payment_status === 'pending').reduce((a, s) => a + s.fixed_price * s.quantity, 0);
@@ -902,6 +994,7 @@ export default function CenterPage() {
 
                         const myPrice = watchItems?.[index]?.my_price || 0;
                         const lineProfit = (price - myPrice) * qty;
+                        const vp = watchItems?.[index]?.volume_points || 0;
 
                         return (
                           <div key={field.id} className="border rounded-lg p-3 space-y-3 bg-muted/30">
@@ -965,10 +1058,13 @@ export default function CenterPage() {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-3 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
+                            <div className={`grid gap-2 bg-background rounded-md px-3 py-2 text-xs border ${vp > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                               <div><p className="text-muted-foreground">My Total</p><p className="font-semibold">{formatCurrency(myPrice * qty)}</p></div>
                               <div><p className="text-muted-foreground">Selling Total</p><p className="font-semibold">{formatCurrency(price * qty)}</p></div>
                               <div><p className="text-muted-foreground">Profit</p><p className={`font-semibold ${lineProfit >= 0 ? 'text-green-600' : 'text-destructive'}`}>{formatCurrency(lineProfit)}</p></div>
+                              {vp > 0 && (
+                                <div><p className="text-muted-foreground">VP Total</p><p className="font-semibold text-purple-600">{(vp * qty).toFixed(2)}</p></div>
+                              )}
                             </div>
 
                             <div className="space-y-1"><Label className="text-xs">Comments (optional)</Label><Input placeholder="Notes..." className="bg-background" {...register(`items.${index}.comments`)} /></div>
@@ -1128,6 +1224,11 @@ export default function CenterPage() {
               </DialogHeader>
               {invoiceGroup && (
                 <div className="space-y-4 overflow-y-auto flex-1 pr-1">
+                  <div className="flex justify-end">
+                    <Button size="sm" variant="outline" className="gap-2" onClick={() => printCenterInvoice(invoiceGroup, managerName)}>
+                      <Download className="h-4 w-4" />Download Invoice
+                    </Button>
+                  </div>
                   <div className="border rounded-lg overflow-hidden">
                     <Table>
                       <TableHeader>
@@ -1263,13 +1364,11 @@ export default function CenterPage() {
       {/* ─── MEMBERSHIPS TAB ─── */}
       {activeTab === 'memberships' && (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Today&apos;s Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipTodayRevenue)}</p><p className="text-xs text-muted-foreground">{membershipTodayEntries} paid today</p></CardContent></Card>
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Monthly Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{formatCurrency(membershipMonthlyRevenue)}</p><p className="text-xs text-muted-foreground">{membershipMonthEntries} paid · {memberships.filter(m => m.payment_status === 'pending').length} pending</p></CardContent></Card>
-            <Card className="border-green-200 dark:border-green-800"><CardHeader className="pb-2"><CardTitle className="text-sm text-green-700 dark:text-green-400">Total Revenue</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-green-700 dark:text-green-400">{formatCurrency(membershipTotalRevenue)}</p><p className="text-xs text-muted-foreground">{memberships.filter(m => m.payment_status === 'paid').length} paid memberships</p></CardContent></Card>
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes Today</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesToday}</p><p className="text-xs text-muted-foreground">served today</p></CardContent></Card>
             <Card><CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Shakes This Month</CardTitle></CardHeader><CardContent><p className="text-xl font-bold">{membershipShakesMonth}</p><p className="text-xs text-muted-foreground">served · {activeMembershipsCount} active</p></CardContent></Card>
-            <Card className="border-blue-200 dark:border-blue-800"><CardHeader className="pb-2"><CardTitle className="text-sm text-blue-700 dark:text-blue-400">Total Shakes</CardTitle></CardHeader><CardContent><p className="text-xl font-bold text-blue-700 dark:text-blue-400">{membershipShakesTotal}</p><p className="text-xs text-muted-foreground">all-time served</p></CardContent></Card>
           </div>
 
           <div className="flex gap-2 flex-wrap">

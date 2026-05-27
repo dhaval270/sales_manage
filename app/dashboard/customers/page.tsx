@@ -497,6 +497,7 @@ export default function CustomersPage() {
   const [reportCustomer, setReportCustomer] = useState<Customer | null>(null);
   const [reportData, setReportData] = useState<ReportData>({ sales: [], centerSales: [], memberships: [], membershipVisits: [], healthReadings: [] });
   const [reportLoading, setReportLoading] = useState(false);
+  const [showHealthReadings, setShowHealthReadings] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
     setLoading(true);
@@ -517,6 +518,7 @@ export default function CustomersPage() {
 
   const openReport = async (c: Customer) => {
     setReportCustomer(c);
+    setShowHealthReadings(false);
     setReportLoading(true);
     const supabase = createClient();
     const [{ data: sales }, { data: centerSales }, { data: memberships }, { data: dbReadings }] = await Promise.all([
@@ -977,49 +979,60 @@ export default function CustomersPage() {
 
                   {/* Health readings */}
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-                      Health Readings &nbsp;<span className="font-normal normal-case">{reportData.healthReadings.length} recorded</span>
-                    </p>
-                    {reportData.healthReadings.length === 0 ? (
-                      <p className="text-sm text-muted-foreground py-2">No health readings found.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {reportData.healthReadings.map((r, i) => {
-                          const fields = [
-                            ['Age', r.age ? `${r.age} yrs` : null],
-                            ['Height', r.height_cm ? `${r.height_cm} cm` : null],
-                            ['Weight', r.weight_kg ? `${r.weight_kg} kg` : null],
-                            ['Body Fat', r.body_fat_pct ? `${r.body_fat_pct}%` : null, 'M:14–17% F:21–24%'],
-                            ['Visceral Fat', r.visceral_fat ? String(r.visceral_fat) : null, '2–8'],
-                            ['BMR', r.bmr_kcal ? `${r.bmr_kcal} kcal` : null, '1800–2000'],
-                            ['BMI', r.bmi ? String(r.bmi) : null, '20–23'],
-                            ['Body Age', r.body_age || null],
-                            ['Subcutaneous Fat', r.subcutaneous_fat_pct ? `${r.subcutaneous_fat_pct}%` : null, '<20%'],
-                            ['Trunk Sub. Fat', r.trunk_subcutaneous_fat_pct ? `${r.trunk_subcutaneous_fat_pct}%` : null, '<20%'],
-                            ['Arms Sub. Fat', r.arms_subcutaneous_fat_pct ? `${r.arms_subcutaneous_fat_pct}%` : null, '<22%'],
-                            ['Legs Sub. Fat', r.legs_subcutaneous_fat_pct ? `${r.legs_subcutaneous_fat_pct}%` : null, '<20%'],
-                            ['Muscle', r.muscle_pct ? `${r.muscle_pct}%` : null, 'M:33–36% F:30–33%'],
-                          ].filter(([, v]) => v !== null);
-                          return (
-                            <div key={r.id} className="rounded-lg border p-3 space-y-2">
-                              <p className="text-sm font-medium">Reading {i + 1} — {formatDate(r.reading_date)}</p>
-                              {fields.length > 0 ? (
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
-                                  {fields.map(([label, value, normal]) => (
-                                    <div key={label as string} className="bg-muted/50 rounded-md px-3 py-2">
-                                      <p className="text-xs text-muted-foreground">{label as string}</p>
-                                      <p className="font-semibold">{value as string}</p>
-                                      {normal && <p className="text-xs text-muted-foreground">Normal: {normal as string}</p>}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No data entered for this reading.</p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowHealthReadings(v => !v)}
+                      className="flex items-center justify-between w-full border-b pb-1 mb-3 group"
+                    >
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Health Readings &nbsp;<span className="font-normal normal-case">{reportData.healthReadings.length} recorded</span>
+                      </p>
+                      <span className="text-xs text-muted-foreground group-hover:text-foreground flex items-center gap-1">
+                        {showHealthReadings ? <><ChevronUp className="h-3.5 w-3.5" />Hide</> : <><ChevronDown className="h-3.5 w-3.5" />Show</>}
+                      </span>
+                    </button>
+                    {showHealthReadings && (
+                      reportData.healthReadings.length === 0 ? (
+                        <p className="text-sm text-muted-foreground py-2">No health readings found.</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {reportData.healthReadings.map((r, i) => {
+                            const fields = [
+                              ['Age', r.age ? `${r.age} yrs` : null],
+                              ['Height', r.height_cm ? `${r.height_cm} cm` : null],
+                              ['Weight', r.weight_kg ? `${r.weight_kg} kg` : null],
+                              ['Body Fat', r.body_fat_pct ? `${r.body_fat_pct}%` : null, 'M:14–17% F:21–24%'],
+                              ['Visceral Fat', r.visceral_fat ? String(r.visceral_fat) : null, '2–8'],
+                              ['BMR', r.bmr_kcal ? `${r.bmr_kcal} kcal` : null, '1800–2000'],
+                              ['BMI', r.bmi ? String(r.bmi) : null, '20–23'],
+                              ['Body Age', r.body_age || null],
+                              ['Subcutaneous Fat', r.subcutaneous_fat_pct ? `${r.subcutaneous_fat_pct}%` : null, '<20%'],
+                              ['Trunk Sub. Fat', r.trunk_subcutaneous_fat_pct ? `${r.trunk_subcutaneous_fat_pct}%` : null, '<20%'],
+                              ['Arms Sub. Fat', r.arms_subcutaneous_fat_pct ? `${r.arms_subcutaneous_fat_pct}%` : null, '<22%'],
+                              ['Legs Sub. Fat', r.legs_subcutaneous_fat_pct ? `${r.legs_subcutaneous_fat_pct}%` : null, '<20%'],
+                              ['Muscle', r.muscle_pct ? `${r.muscle_pct}%` : null, 'M:33–36% F:30–33%'],
+                            ].filter(([, v]) => v !== null);
+                            return (
+                              <div key={r.id} className="rounded-lg border p-3 space-y-2">
+                                <p className="text-sm font-medium">Reading {i + 1} — {formatDate(r.reading_date)}</p>
+                                {fields.length > 0 ? (
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                                    {fields.map(([label, value, normal]) => (
+                                      <div key={label as string} className="bg-muted/50 rounded-md px-3 py-2">
+                                        <p className="text-xs text-muted-foreground">{label as string}</p>
+                                        <p className="font-semibold">{value as string}</p>
+                                        {normal && <p className="text-xs text-muted-foreground">Normal: {normal as string}</p>}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">No data entered for this reading.</p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )
                     )}
                   </div>
 

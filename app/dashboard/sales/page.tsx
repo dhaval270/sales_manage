@@ -960,6 +960,7 @@ export default function SalesPage() {
                     const myPrice = watchItems?.[index]?.my_price || 0;
                     const sellingPrice = watchItems?.[index]?.retail_price || 0;
                     const lineProfit = (sellingPrice - myPrice) * qty;
+                    const vp = watchItems?.[index]?.volume_points || 0;
 
                     return (
                       <div key={field.id} className="border rounded-lg p-3 space-y-3 bg-muted/30">
@@ -1024,7 +1025,7 @@ export default function SalesPage() {
                           </div>
                         </div>
 
-                        <div className="grid grid-cols-3 gap-2 bg-background rounded-md px-3 py-2 text-xs border">
+                        <div className={`grid gap-2 bg-background rounded-md px-3 py-2 text-xs border ${vp > 0 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                           <div>
                             <p className="text-muted-foreground">My Total</p>
                             <p className="font-semibold">{formatCurrency(myPrice * qty)}</p>
@@ -1037,6 +1038,12 @@ export default function SalesPage() {
                             <p className="text-muted-foreground">Profit</p>
                             <p className={`font-semibold ${lineProfit >= 0 ? 'text-green-600' : 'text-destructive'}`}>{formatCurrency(lineProfit)}</p>
                           </div>
+                          {vp > 0 && (
+                            <div>
+                              <p className="text-muted-foreground">VP Total</p>
+                              <p className="font-semibold text-purple-600">{(vp * qty).toFixed(2)}</p>
+                            </div>
+                          )}
                         </div>
 
                         <div className="space-y-1">
