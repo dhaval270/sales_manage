@@ -15,8 +15,6 @@ import {
   Users,
   Settings,
   LogOut,
-  Menu,
-  X,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -52,7 +50,7 @@ export function Sidebar({ userName }: SidebarProps) {
       <div className="fixed top-0 left-0 right-0 z-40 flex items-center h-14 px-4 border-b bg-background gap-3">
         <button
           onMouseEnter={() => setOpen(true)}
-          onClick={() => setOpen(false)}
+          onClick={() => setOpen(prev => !prev)}
           className="flex flex-col justify-center items-center gap-1.5 p-2 rounded-md hover:bg-accent transition-colors w-9 h-9 flex-shrink-0"
           aria-label="Toggle menu"
         >

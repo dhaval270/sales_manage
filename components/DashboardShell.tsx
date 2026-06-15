@@ -48,7 +48,7 @@ export function DashboardShell({ children, userName }: Props) {
         {/* Hamburger — hover opens, click closes */}
         <button
           onMouseEnter={() => setOpen(true)}
-          onClick={() => setOpen(false)}
+          onClick={() => setOpen(prev => !prev)}
           className="flex flex-col justify-center items-center gap-1.5 p-2 rounded-md hover:bg-accent transition-colors w-9 h-9 flex-shrink-0"
           aria-label="Toggle menu"
         >
